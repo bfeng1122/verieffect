@@ -1,0 +1,6 @@
+# keys and receipt chains are operator-local secrets/state — never commit
+data/
+
+.venv/
+__pycache__/
+*.pyc
