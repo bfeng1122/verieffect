@@ -115,10 +115,21 @@ class ChainStore:
         new = self.data_dir / f"chain_{safe}_{tag}.jsonl"
         if not new.exists():
             # legacy pre-hash filenames keep resolving (read/append compatibility)
+            # — but only if the legacy chain actually belongs to THIS agent_id
+            # (otherwise "a b" would inherit "a_b"'s legacy file)
             legacy = self.data_dir / f"chain_{safe}.jsonl"
-            if legacy.exists():
+            if legacy.exists() and self._legacy_belongs_to(legacy, agent_id):
                 return legacy
         return new
+
+    @staticmethod
+    def _legacy_belongs_to(path: Path, agent_id: str) -> bool:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                first = f.readline().strip()
+            return bool(first) and json.loads(first).get("agent_id") == agent_id
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
 
     def last_hash(self, agent_id: str) -> str:
         p = self._path(agent_id)

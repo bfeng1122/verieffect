@@ -281,6 +281,37 @@ with tempfile.TemporaryDirectory() as tmp:
     ok_v, why_v = verify_receipt({"v": 99, "sig": "ed25519:" + "00" * 64}, pub_pem)
     check("unknown schema version rejected", not ok_v and "version" in why_v)
 
+    # --- legacy chain fallback must not let colliding ids share a file (re-review #1) ---
+    store2 = ChainStore(tmp / "chains2")
+    # simulate a pre-hash-format legacy chain owned by "a_b"
+    legacy_p = tmp / "chains2" / "chain_a_b.jsonl"
+    legacy_p.parent.mkdir(parents=True, exist_ok=True)
+    bA = receipt_body("cA", "a_b", "file_exists", "x", {}, {}, "PASS", GENESIS_HASH)
+    legacy_p.write_text(json.dumps(sign_receipt(bA, priv), sort_keys=True) + "\n",
+                        encoding="utf-8")
+    pA = store2._path("a_b")
+    pB = store2._path("a b")
+    check("'a_b' resolves to its legacy file", pA == legacy_p)
+    check("colliding id 'a b' does NOT inherit a_b's legacy file", pA != pB)
+    check("'a b' resolves to its own (new) chain file", not pB.exists())
+
+    # --- --expect-head tolerates stray whitespace (re-review #3) ---
+    m2 = re.search(r"chain head: ([0-9a-f]{64})", cp4.stdout)
+    cp8 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+         "--expect-head", (m2.group(1) if m2 else "") + "  \n"],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("head with trailing whitespace still matches", cp8.returncode == 0)
+
+    # --- internal CLI verify: malformed receipt JSON -> clean exit 2, no traceback ---
+    bad_receipt = tmp / "bad_receipt.json"
+    bad_receipt.write_text("{not json", encoding="utf-8")
+    cp9 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "verify", str(bad_receipt)],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("cli verify on malformed JSON: exit 2, no traceback",
+          cp9.returncode == 2 and "Traceback" not in cp9.stderr)
+
 print()
 n_pass = sum(1 for _, ok in results if ok)
 print(f"RESULT: {n_pass}/{len(results)} passed")

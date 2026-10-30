@@ -74,7 +74,11 @@ def cmd_claim(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    receipt = json.load(args.receipt)
+    try:
+        receipt = json.load(args.receipt)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"INVALID: cannot parse receipt JSON: {e}", file=sys.stderr)
+        return 2
     pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
     ok, why = verify_receipt(receipt, pub)
     print(json.dumps({"signature_ok": ok, "detail": why,
@@ -99,9 +103,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
         problems.append(
             f"count mismatch — expected {args.expect_count} receipts, found "
             f"{len(receipts)} (possible tail truncation)")
-    if args.expect_head and head_hash != args.expect_head.lower():
+    if args.expect_head and head_hash != args.expect_head.strip().lower():
         problems.append(
-            f"head mismatch — expected {args.expect_head[:16]}…, got "
+            f"head mismatch — expected {args.expect_head.strip()[:16]}…, got "
             f"{head_hash[:16]}… (possible tail truncation or regeneration)")
     print(f"chain head: {head_hash}")
     print(f"last receipt: {receipts[-1].get('claim_id')} @ {receipts[-1].get('checked_at')}")

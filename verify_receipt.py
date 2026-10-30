@@ -148,9 +148,9 @@ def main() -> int:
         bad += 1
         print(f"  count mismatch: expected {args.expect_count}, found {n} "
               "(possible tail truncation)")
-    if args.expect_head and head != args.expect_head.lower():
+    if args.expect_head and head != args.expect_head.strip().lower():
         bad += 1
-        print(f"  head mismatch: expected {args.expect_head[:16]}…, got "
+        print(f"  head mismatch: expected {args.expect_head.strip()[:16]}…, got "
               f"{head[:16]}… (possible truncation/regeneration)")
     print(f"chain head: {head}")
     print(f"chain audit: {n} receipts, {bad} bad")
