@@ -214,7 +214,7 @@ with tempfile.TemporaryDirectory() as tmp:
     _con = _sq3.connect(str(sq)); _con.execute("CREATE TABLE t (x INTEGER)"); _con.commit(); _con.close()
     obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "selectfoo 1"})
     check("'selectfoo' rejected by keyword guard", v == UNVERIFIABLE and "refused" in str(obs.get("error", "")))
-    obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "SELECT COUNT(*) FROM t", "row_count": 0})
+    obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "SELECT COUNT(*) FROM t", "rows": [[0]]})
     check("legit SELECT still passes guard", v == PASS)
     obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "select"})
     check("bare 'select' (keyword + EOL) reaches sqlite, errors cleanly",
