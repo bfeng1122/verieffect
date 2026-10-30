@@ -208,6 +208,18 @@ with tempfile.TemporaryDirectory() as tmp:
                              {**SHELL_OK, "stdout_sha256": "0" * 64})
     check("wrong stdout_sha256 -> FAIL", v == FAIL)
 
+    # --- SQL guard rejects lookalike keywords (tightened regex) ---
+    sq = tmp / "guard.db"
+    import sqlite3 as _sq3
+    _con = _sq3.connect(str(sq)); _con.execute("CREATE TABLE t (x INTEGER)"); _con.commit(); _con.close()
+    obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "selectfoo 1"})
+    check("'selectfoo' rejected by keyword guard", v == UNVERIFIABLE and "refused" in str(obs.get("error", "")))
+    obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "SELECT COUNT(*) FROM t", "row_count": 0})
+    check("legit SELECT still passes guard", v == PASS)
+    obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "select"})
+    check("bare 'select' (keyword + EOL) reaches sqlite, errors cleanly",
+          v == UNVERIFIABLE and "refused" not in str(obs.get("error", "")))
+
     print("== CLI end-to-end ==")
     env = dict(os.environ, AGENTPROOF_HOME=str(tmp / "cli_home"))
     cp = subprocess.run(

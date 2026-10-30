@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -262,8 +263,12 @@ def probe_db_row_matches(target: str, expect: dict[str, Any] | None) -> tuple[di
             observed["error"] = "expect.query (SELECT statement) is required"
             return observed, UNVERIFIABLE
         head = query.strip().lower()
-        if not (head.startswith("select") or head.startswith("with")):
-            observed["error"] = "refused: query must be SELECT/WITH (read-only by construction)"
+        # keyword must be followed by whitespace or end — rejects lookalikes
+        # like "selectfoo" (sqlite would refuse them anyway, but the guard
+        # should mean what it says). Multi-statement batches are additionally
+        # blocked by sqlite3.execute() itself and by mode=ro + PRAGMA query_only.
+        if not re.match(r"^(select|with)(\s|$)", head):
+            observed["error"] = "refused: query must start with SELECT/WITH (read-only by construction)"
             return observed, UNVERIFIABLE
         try:
             import urllib.parse
