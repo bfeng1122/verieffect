@@ -414,6 +414,72 @@ with tempfile.TemporaryDirectory() as tmp:
     check("two concurrent writers: 20 receipts, no chain fork",
           len(conc_store.read_all("conc")) == 20 and conc_problems == [])
 
+    # --- thread stress: 4 threads x 10 claims in ONE process (fuzz F2) ---
+    import threading as _th
+    th_home = tmp / "th_home"
+    th_store = ChainStore(th_home / "chains")
+    th_kr = Keyring(th_home / "keys")
+    th_priv = th_kr.load_or_create()
+    th_pub = th_kr.public_key_pem()
+    th_errors = []
+
+    def _th_worker(tid):
+        try:
+            for i in range(10):
+                with th_store.transaction("th"):
+                    b = receipt_body(f"t{tid}-{i}", "th", "file_exists", "x", {},
+                                     {"i": i}, "PASS", th_store.last_hash("th"))
+                    th_store.append(sign_receipt(b, th_priv))
+        except Exception as e:  # noqa: BLE001
+            th_errors.append(f"{tid}: {e}")
+
+    threads = [_th.Thread(target=_th_worker, args=(t,)) for t in range(4)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    th_receipts = th_store.read_all("th")
+    check("4 threads x 10 claims: no errors", th_errors == [])
+    check("4 threads x 10 claims: all 40 on disk", len(th_receipts) == 40)
+    check("4 threads x 10 claims: chain intact (no fork)",
+          verify_chain(th_receipts, th_pub) == [])
+
+    # --- uppercase-hex sig rejected (fuzz #3) ---
+    up = json.loads(json.dumps(rec))
+    up["sig"] = "ed25519:" + up["sig"][len("ed25519:"):].upper()
+    ok_up, why_up = verify_receipt(up, pub_pem)
+    check("uppercase-hex sig rejected (canonical form enforced)",
+          not ok_up and "lowercase" in why_up)
+
+    # --- verify_chain hostile elements: never raises (fuzz #2) ---
+    try:
+        p1 = verify_chain([1, "junk", None], pub_pem)
+        p2 = verify_chain([{"v": 1, "expect": float("nan"), "sig": "ed25519:" + "00"*64,
+                            "prev_receipt_hash": GENESIS_HASH}], pub_pem)
+        check("verify_chain survives non-dict + NaN receipts",
+              len(p1) == 3 and len(p2) >= 1)
+    except Exception as e:  # noqa: BLE001
+        check(f"verify_chain survives non-dict + NaN receipts (raised {e!r})", False)
+
+    # --- standalone verifier: invalid UTF-8 chain + BOM chain, no traceback (fuzz #1/#4) ---
+    utf8_chain = tmp / "bad_utf8.jsonl"
+    good_line = json.dumps(rec, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    utf8_chain.write_bytes(good_line + b"\n" + b'{"claim_id": "\xed\xa0\x80"}\n')
+    cp13 = subprocess.run(
+        [PY, str(ROOT / "verify_receipt.py"),
+         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         "--chain", str(utf8_chain)],
+        capture_output=True, text=True, cwd=str(ROOT), encoding="utf-8", errors="replace")
+    check("invalid-UTF8 chain: no traceback, malformed line reported",
+          "Traceback" not in cp13.stderr and cp13.returncode == 1)
+    bom_chain = tmp / "bom_chain.jsonl"
+    bom_chain.write_bytes(b"\xef\xbb\xbf" + json.dumps(rec).encode("utf-8") + b"\n")
+    cp14 = subprocess.run(
+        [PY, str(ROOT / "verify_receipt.py"),
+         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         "--chain", str(bom_chain)],
+        capture_output=True, text=True, cwd=str(ROOT))
+    check("BOM-prefixed chain: first receipt still verifies (utf-8-sig)",
+          cp14.returncode == 0 and "0 bad" in cp14.stdout)
+
 print()
 n_pass = sum(1 for _, ok in results if ok)
 print(f"RESULT: {n_pass}/{len(results)} passed")

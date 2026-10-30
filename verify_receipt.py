@@ -49,9 +49,14 @@ def verify_one(receipt, pub) -> tuple[bool, str]:
     sig_field = receipt.get("sig")
     if not isinstance(sig_field, str) or not sig_field.startswith("ed25519:"):
         return False, "missing/unsupported signature"
+    hex_part = sig_field[len("ed25519:"):]
+    if hex_part != hex_part.lower():
+        # spec mandates lowercase hex; rejecting uppercase keeps the canonical
+        # form (and thus chain-head hashes) unambiguous
+        return False, "signature hex must be lowercase (canonical form)"
     body = {k: v for k, v in receipt.items() if k != "sig"}
     try:
-        sig = bytes.fromhex(sig_field[len("ed25519:"):])
+        sig = bytes.fromhex(hex_part)
     except ValueError:
         return False, "malformed signature encoding"
     try:
@@ -89,7 +94,8 @@ def main() -> int:
 
     if not args.chain:
         try:
-            receipt = json.load(open(args.file, encoding="utf-8"))
+            with open(args.file, encoding="utf-8-sig", errors="replace") as rf:
+                receipt = json.load(rf)
         except Exception as e:  # noqa: BLE001
             print(f"INVALID: cannot parse receipt file: {e}")
             return 1
@@ -105,7 +111,10 @@ def main() -> int:
     last = None
     prev_checked_at = None
     try:
-        fh = open(args.file, encoding="utf-8")
+        # utf-8-sig strips a Windows-editor BOM; errors="replace" keeps the
+        # walk alive on invalid bytes (the replaced line then fails JSON
+        # parsing and is reported as malformed — never a traceback)
+        fh = open(args.file, encoding="utf-8-sig", errors="replace")
     except OSError as e:
         print(f"INVALID: cannot open chain file: {e}")
         return 1

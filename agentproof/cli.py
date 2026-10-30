@@ -51,22 +51,35 @@ def cmd_claim(args: argparse.Namespace) -> int:
     keyring = Keyring(home() / "keys")
     priv = keyring.load_or_create()
 
+    # Probe FIRST, outside the lock — probes can take seconds (http_ok,
+    # exit_code) and holding the chain lock that long starves other claimers
+    # into timeout. The critical section is only: read prev-hash → sign →
+    # append, which is milliseconds.
+    observed, verdict = PROBES[args.kind](args.target, expect)
+
     # lock the whole read-last-hash → append cycle: concurrent claims must
     # serialize or they fork the chain (both would read the same prev hash)
-    with store.transaction(args.agent):
-        observed, verdict = PROBES[args.kind](args.target, expect)
-        body = receipt_body(
-            claim_id=str(uuid.uuid4()),
-            agent_id=args.agent,
-            kind=args.kind,
-            target=args.target,
-            expect=expect,
-            observed=observed,
-            verdict=verdict,
-            prev_hash=store.last_hash(args.agent),
-        )
-        receipt = sign_receipt(body, priv)
-        store.append(receipt)
+    try:
+        with store.transaction(args.agent):
+            body = receipt_body(
+                claim_id=str(uuid.uuid4()),
+                agent_id=args.agent,
+                kind=args.kind,
+                target=args.target,
+                expect=expect,
+                observed=observed,
+                verdict=verdict,
+                prev_hash=store.last_hash(args.agent),
+            )
+            receipt = sign_receipt(body, priv)
+            store.append(receipt)
+    except RuntimeError as e:
+        # structured error from a corrupt chain tail — match audit's behavior
+        print(f"CLAIM ABORTED: {e}", file=sys.stderr)
+        return 2
+    except TimeoutError as e:
+        print(f"CLAIM ABORTED: {e}", file=sys.stderr)
+        return 2
 
     out = json.dumps(receipt, indent=2, ensure_ascii=False)
     if args.out:

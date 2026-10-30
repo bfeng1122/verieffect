@@ -185,7 +185,9 @@ class ChainStore:
         if not p.exists():
             return []
         out = []
-        with p.open("r", encoding="utf-8") as f:
+        # errors="replace": invalid bytes make the line fail JSON parsing and
+        # produce the structured corrupt-line error, never a UnicodeDecodeError
+        with p.open("r", encoding="utf-8", errors="replace") as f:
             for lineno, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
@@ -201,46 +203,98 @@ class ChainStore:
 
 import contextlib
 import sys
+import threading
+import time as _time
 
-_held_locks: set = set()
+# Per-path in-process locks + per-thread depth counters. Reentrancy must be
+# thread-aware: a process-global "held" set let two THREADS both skip locking
+# and run concurrently (fuzz finding F2). flock/msvcrt only exclude across
+# processes/fds, never across threads of one process.
+_local_locks: dict[str, threading.RLock] = {}
+_local_locks_guard = threading.Lock()
+_depth: dict[tuple[int, str], int] = {}
+
+LOCK_TIMEOUT_S = 30.0  # Windows: give up (loudly) after this long contended
+
+
+def _lock_for(key: str) -> threading.RLock:
+    with _local_locks_guard:
+        lk = _local_locks.get(key)
+        if lk is None:
+            lk = threading.RLock()  # reentrant: same-thread nesting must not deadlock
+            _local_locks[key] = lk
+        return lk
 
 
 @contextlib.contextmanager
-def _file_lock(path: Path):
-    """Best-effort cross-process lock on <path>.lock.
+def _file_lock(path: Path, timeout_s: float = LOCK_TIMEOUT_S):
+    """Cross-process AND cross-thread exclusive lock on <path>.lock.
 
-    POSIX: fcntl.flock. Windows: msvcrt.locking on the lock file. Reentrant
-    within the process (a held path is not re-locked — flock would self-block
-    on a second fd), and falls back to no-op where no primitive is available.
+    Ordering: in-process threading.Lock first (threads never share an fd
+    lock), then the OS-level lock (POSIX flock blocks; Windows msvcrt.locking
+    is retried with LK_NBLCK until timeout and then RAISES — we never proceed
+    unlocked silently, which was fuzz finding F1).
+
+    Reentrant per (thread, path): nested acquisitions by the same thread are
+    no-ops at both levels.
     """
     key = str(path)
-    if key in _held_locks:
-        yield
+    tkey = (threading.get_ident(), key)
+    lk = _lock_for(key)
+    lk.acquire()
+    if _depth.get(tkey, 0) > 0:
+        # same thread re-entering: bump depth, skip OS-level lock (we own it)
+        _depth[tkey] += 1
+        try:
+            yield
+        finally:
+            _depth[tkey] -= 1
+            lk.release()
         return
+    _depth[tkey] = 1
     lock_path = path.with_suffix(path.suffix + ".lock")
     fh = open(lock_path, "a+")
-    _held_locks.add(key)
+    os_locked = False
     try:
         if sys.platform != "win32":
             fcntl = __import__("fcntl")
             fcntl.flock(fh, fcntl.LOCK_EX)
+            os_locked = True
         else:
-            try:
-                import msvcrt
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-            except OSError:
-                pass  # lock busy/unavailable — proceed (best-effort)
+            import msvcrt
+            deadline = _time.monotonic() + timeout_s
+            fh.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    os_locked = True
+                    break
+                except OSError:
+                    if _time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"could not acquire chain lock {lock_path.name} "
+                            f"within {timeout_s:.0f}s — another process is "
+                            "holding it. Refusing to proceed unlocked.")
+                    _time.sleep(0.05)
         yield
     finally:
-        _held_locks.discard(key)
-        if sys.platform != "win32":
-            try:
-                fcntl = __import__("fcntl")
-                fcntl.flock(fh, fcntl.LOCK_UN)
-            except OSError:
-                pass
+        _depth[tkey] -= 1
+        if os_locked:
+            if sys.platform != "win32":
+                try:
+                    fcntl = __import__("fcntl")
+                    fcntl.flock(fh, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            else:
+                try:
+                    import msvcrt
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
         fh.close()
+        lk.release()
 
 
 # ---------------------------------------------------------------- receipts
@@ -283,8 +337,13 @@ def verify_receipt(receipt: dict, pub_pem: str | bytes) -> tuple[bool, str]:
     sig_field = receipt.get("sig")
     if not isinstance(sig_field, str) or not sig_field.startswith("ed25519:"):
         return False, "unsupported signature scheme"
+    hex_part = sig_field[len("ed25519:"):]
+    if hex_part != hex_part.lower():
+        # spec mandates lowercase hex — canonical form keeps chain-head
+        # hashes unambiguous across encodings of the same receipt
+        return False, "signature hex must be lowercase (canonical form)"
     try:
-        sig = bytes.fromhex(sig_field[len("ed25519:"):])
+        sig = bytes.fromhex(hex_part)
     except ValueError:
         return False, "malformed signature encoding"
     # work on a shallow copy — never mutate (even transiently) the caller's dict
@@ -317,6 +376,9 @@ def verify_chain(receipts: list[dict], pub_pem: str | bytes,
     prev = GENESIS_HASH
     prev_checked_at = None
     for i, r in enumerate(receipts):
+        if not isinstance(r, dict):
+            problems.append(f"[{i}] not a JSON object ({type(r).__name__})")
+            continue  # cannot hash a non-dict into the chain walk
         ok, why = verify_receipt(r, pub_pem)
         if not ok:
             problems.append(f"[{i}] {r.get('claim_id','?')}: {why}")
@@ -337,5 +399,14 @@ def verify_chain(receipts: list[dict], pub_pem: str | bytes,
                 f"{ts} < previous {prev_checked_at} (possible backdating)")
         if isinstance(ts, str):
             prev_checked_at = ts
-        prev = sha256_hex(canonical_json(r))
+        try:
+            prev = sha256_hex(canonical_json(r))
+        except (ValueError, TypeError) as e:
+            # non-canonicalizable receipt (e.g. NaN from a json literal):
+            # already flagged by verify_receipt; keep the walk alive with a
+            # fallback hash so following chain links are still compared
+            problems.append(f"[{i}] {r.get('claim_id','?')}: non-canonicalizable "
+                            f"receipt ({e})")
+            prev = sha256_hex(json.dumps(r, sort_keys=True,
+                                         ensure_ascii=False).encode("utf-8", "replace"))
     return problems
