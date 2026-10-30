@@ -30,6 +30,14 @@ from .core import (
 )
 from .probes import PROBES
 
+# Windows consoles may default to cp1252; our output uses ✓/… — force UTF-8
+# so prints never crash with UnicodeEncodeError (this broke CI on windows).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        pass
+
 
 def home() -> Path:
     return Path(os.environ.get("AGENTPROOF_HOME", Path.cwd() / "data"))

@@ -26,6 +26,14 @@ import sys
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 
+# Windows consoles may default to cp1252; our output uses ✓/… — force UTF-8
+# so prints never crash with UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        pass
+
 
 def canonical_json(obj) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
