@@ -480,6 +480,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check("BOM-prefixed chain: first receipt still verifies (utf-8-sig)",
           cp14.returncode == 0 and "0 bad" in cp14.stdout)
 
+    # --- cli verify/audit on a missing --pubkey: clean exit 2, no traceback ---
+    cp15 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "verify", str(tmp / "receipt.json"),
+         "--pubkey", str(tmp / "no-such-key.pub")],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("cli verify missing pubkey: exit 2, no traceback",
+          cp15.returncode == 2 and "Traceback" not in cp15.stderr)
+    cp16 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+         "--pubkey", str(tmp / "no-such-key.pub")],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("cli audit missing pubkey: exit 2, no traceback",
+          cp16.returncode == 2 and "Traceback" not in cp16.stderr)
+
 print()
 n_pass = sum(1 for _, ok in results if ok)
 print(f"RESULT: {n_pass}/{len(results)} passed")

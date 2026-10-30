@@ -5,7 +5,7 @@ Show HN: AgentProof – Signed, tamper-evident receipts for AI agent work claims
 
 **Body:**
 
-I run a 24/7 AI trading pipeline (paper trading, multi-agent: scout, analyst, risk gate, executor, bookkeeper). An analysis of the public τ-bench retail benchmark (Veridatum) found that ~26% of simulated agent tasks disagreed with the database on final state — the log says "done," the side effect never happened. Peer-reviewed work agrees: in OverclaimBench, ~80% of incomplete runs are misleadingly reported. I didn't want to take that risk with my own pipeline, so I built AgentProof:
+I run a 24/7 AI trading pipeline (paper trading, multi-agent: scout, analyst, risk gate, executor, bookkeeper). An analysis of the public τ-bench retail benchmark (Veridatum) found that ~26% of simulated agent tasks disagreed with the database on final state — the log says "done," the side effect never happened. The research literature agrees: in OverclaimBench, ~80% of incomplete runs are misleadingly reported. I didn't want to take that risk with my own pipeline, so I built AgentProof:
 
 https://github.com/bfeng1122/agentproof
 
@@ -18,9 +18,9 @@ Design choices worth arguing about:
 - **Dangerous probes are gated.** The exit_code probe runs with verifier privileges, so it's OFF by default (explicit allow_shell opt-in); http_ok refuses non-GET/HEAD methods by default.
 - **Exit codes as the integration surface.** 0/1/2, so cron jobs and shell scripts branch on verification directly.
 
-On day one of dogfooding it caught my own agent filing a claim about a backup path that didn't exist. It's now been running against my pipeline for two weeks: 38 receipts across fills and backup checks, and a deliberate tamper test that breaks the chain exactly as designed. (Amusingly, before launch I had three AI agents red-team the repo — the security one reproduced a chain-relabeling attack and tail-truncation gap that are now fixed and tested. The tool's whole thesis, applied to itself.)
+On day one of dogfooding it caught my own agent filing a claim about a backup path that didn't exist. It's now been running against my pipeline for two weeks: 40+ receipts across fills and backup checks, and a deliberate tamper test that breaks the chain exactly as designed. (Amusingly, before launch I had AI agents red-team the repo in multiple rounds — the security reviewer reproduced a chain-relabeling attack, and a later fuzz round caught the chain lock silently self-disabling under contention on Windows. All fixed and regression-tested. The tool's whole thesis, applied to itself.)
 
-MIT licensed. ~1,400 lines of Python, deps only `cryptography` + `requests`. 82 tests + CI (ubuntu/windows × py3.10–3.12). I'm looking for harsh feedback on the receipt schema (docs/receipt-schema.md) and claim kinds people actually need.
+MIT licensed. ~1,300 lines of Python (+~500 of tests), deps only `cryptography` + `requests`. 84 tests + CI (ubuntu/windows × py3.10–3.12). I'm looking for harsh feedback on the receipt schema (docs/receipt-schema.md) and claim kinds people actually need.
 
 ---
 

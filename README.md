@@ -29,7 +29,7 @@ AgentProof probes ground truth *itself* and issues a receipt anyone can verify o
 An analysis by [Veridatum](https://veridatum.io/) of the public τ-bench retail
 benchmark found **26% of simulated agent tasks disagreed with the database on final
 state** (456 GPT-4.1 retail simulations; 118 failed the final-state check). The
-peer-reviewed literature agrees: agents self-report perfect completion while verified
+research literature agrees: agents self-report perfect completion while verified
 accuracy is 86–96% ("The Completion Illusion"), and ~80% of incomplete runs are
 misleadingly reported (OverclaimBench, arXiv:2609.20812). Autonomous agent stacks —
 cron-driven pipelines, CI bots, personal agents — fail the same way: the log says
@@ -69,7 +69,7 @@ Output (truncated):
   "kind": "file_exists",
   "target": "./README.md",
   "expect": {"min_bytes": 1024},
-  "observed": {"exists": true, "size": 4096, "mtime": 1792090847},
+  "observed": {"path": "./README.md", "exists": true, "size": 4096, "mtime": 1792090847},
   "verdict": "PASS",
   "checked_at": "2026-10-20T23:12:06Z",
   "prev_receipt_hash": "…",
@@ -167,7 +167,7 @@ Full details in [receipt-schema.md](docs/receipt-schema.md).
 
 ## Status
 
-MVP. 82-test suite (`python tests/test_all.py` with the venv python; CI runs
+MVP. 84-test suite (`python tests/test_all.py` with the venv python; CI runs
 ubuntu+windows × Python 3.10–3.12), in daily production use verifying a 24/7
 paper-trading agent stack (fills, portfolio state, backups) since Oct 2026 — 38+
 receipts and a deliberate tamper test that breaks the chain as designed.

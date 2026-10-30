@@ -6,8 +6,9 @@ Usage:
       --expect '{"min_bytes": 1024}'
   agentproof claim http_ok --agent my-agent --target https://example.com \
       --expect '{"status": 200, "body_contains": "Example"}'
-  agentproof verify < receipt.json          # single receipt (offline)
+  agentproof verify receipt.json            # single receipt (offline)
   agentproof audit --agent my-agent         # full chain audit
+  agentproof checkpoint --agent my-agent    # head+count for external anchoring
   agentproof pubkey                          # print verifier public key (PEM)
 
 Data/key layout (default under ./data, override with AGENTPROOF_HOME):
@@ -101,7 +102,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
     except (json.JSONDecodeError, ValueError) as e:
         print(f"INVALID: cannot parse receipt JSON: {e}", file=sys.stderr)
         return 2
-    pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
+    try:
+        pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
+    except OSError as e:
+        print(f"INVALID: cannot read public key: {e}", file=sys.stderr)
+        return 2
     ok, why = verify_receipt(receipt, pub)
     if ok:
         out = {"signature_ok": True, "detail": why,
@@ -127,7 +132,11 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if not receipts:
         print(f"no receipts for agent {args.agent}")
         return 2
-    pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
+    try:
+        pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
+    except OSError as e:
+        print(f"AUDIT ABORTED: cannot read public key: {e}", file=sys.stderr)
+        return 2
     problems = verify_chain(receipts, pub, expected_agent_id=args.agent)
     from .core import canonical_json, sha256_hex
     head_hash = sha256_hex(canonical_json(receipts[-1]))

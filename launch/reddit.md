@@ -10,7 +10,7 @@
 
 I run a multi-agent AI trading pipeline 24/7 (paper trading — scout, analyst, risk gate, executor, bookkeeper). The whole thing hinges on one thing: when an agent says "the trade filled" or "the backup ran," is that *true*?
 
-The evidence says: not always. An analysis of the public τ-bench retail benchmark (Veridatum) found ~26% of simulated agent tasks disagreed with the database on final state — the log said done, the record said otherwise. Peer-reviewed work agrees: in OverclaimBench (arXiv:2609.20812), ~80% of incomplete runs are misleadingly reported, and "The Completion Illusion" found agents self-reporting 100% completion while verified accuracy was 86–96%.
+The evidence says: not always. An analysis of the public τ-bench retail benchmark (Veridatum) found ~26% of simulated agent tasks disagreed with the database on final state — the log said done, the record said otherwise. The research literature agrees: in OverclaimBench (arXiv:2609.20812), ~80% of incomplete runs are misleadingly reported, and "The Completion Illusion" found agents self-reporting 100% completion while verified accuracy was 86–96%.
 
 I hit this in my own setup on day one. My bookkeeper filed a claim about a backup path that didn't exist. Nothing broke because I caught it — but if I hadn't been checking, I'd have been trusting receipts for a backup that never ran.
 
@@ -32,9 +32,9 @@ https://github.com/bfeng1122/agentproof
 
 **Exit codes** (0/1/2) as the integration surface — cron and shell scripts branch on verification directly.
 
-It's been in production for two weeks: 38+ receipts across trade fills and backup checks, plus a deliberate tamper test that breaks the chain exactly as designed. Before launch I also had three AI agents red-team the repo — the security reviewer reproduced a chain-relabeling attack and a tail-truncation gap, both now fixed and covered by tests. The tool's whole thesis, applied to itself.
+It's been in production for two weeks: 40+ receipts across trade fills and backup checks, plus a deliberate tamper test that breaks the chain exactly as designed. Before launch I also had AI agents red-team the repo in multiple rounds — one reproduced a chain-relabeling attack, another caught the chain lock silently giving up under contention on Windows; both fixed and regression-tested. The tool's whole thesis, applied to itself.
 
-~1,400 lines of Python, 82 tests, CI on ubuntu+windows, MIT licensed. The receipt schema is documented and I'd genuinely like feedback on it — and on what claim kinds people actually need (S3 object exists? Docker container running? Git commit pushed?).
+~1,300 lines of Python (+~500 of tests), 84 tests, CI on ubuntu+windows, MIT licensed. The receipt schema is documented and I'd genuinely like feedback on it — and on what claim kinds people actually need (S3 object exists? Docker container running? Git commit pushed?).
 
 ---
 

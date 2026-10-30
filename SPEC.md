@@ -1,6 +1,12 @@
 # AgentProof — Verified Claims for Agent Work
 **One-page MVP spec · v0.1 · 2026-10-15 · Helen + Bing**
 
+> **Historical planning doc.** The shipped system differs: JSONL chain files
+> (not SQLite), no `agentproofd` daemon (library + CLI), bare 64-hex
+> `prev_receipt_hash` (no `sha256:` prefix), `checked_at` is a top-level
+> receipt field, CLI flags are `--target`/`--expect`. Normative format:
+> [docs/receipt-schema.md](docs/receipt-schema.md).
+
 ## What it is
 A tiny service that lets an agent prove a claim about the real world with a
 deterministic check, and emits a signed, tamper-evident receipt. No LLM in the
