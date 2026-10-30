@@ -34,7 +34,7 @@ https://github.com/bfeng1122/agentproof
 
 It's been in production for two weeks: 38+ receipts across trade fills and backup checks, plus a deliberate tamper test that breaks the chain exactly as designed. Before launch I also had three AI agents red-team the repo — the security reviewer reproduced a chain-relabeling attack and a tail-truncation gap, both now fixed and covered by tests. The tool's whole thesis, applied to itself.
 
-~1,300 lines of Python, 58 tests, MIT licensed. The receipt schema is documented and I'd genuinely like feedback on it — and on what claim kinds people actually need (S3 object exists? Docker container running? Git commit pushed?).
+~1,400 lines of Python, 68 tests, CI on ubuntu+windows, MIT licensed. The receipt schema is documented and I'd genuinely like feedback on it — and on what claim kinds people actually need (S3 object exists? Docker container running? Git commit pushed?).
 
 ---
 

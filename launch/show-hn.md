@@ -20,7 +20,7 @@ Design choices worth arguing about:
 
 On day one of dogfooding it caught my own agent filing a claim about a backup path that didn't exist. It's now been running against my pipeline for two weeks: 38 receipts across fills and backup checks, and a deliberate tamper test that breaks the chain exactly as designed. (Amusingly, before launch I had three AI agents red-team the repo — the security one reproduced a chain-relabeling attack and tail-truncation gap that are now fixed and tested. The tool's whole thesis, applied to itself.)
 
-MIT licensed. ~1,300 lines of Python, deps only `cryptography` + `requests`. 58 tests. I'm looking for harsh feedback on the receipt schema (docs/receipt-schema.md) and claim kinds people actually need.
+MIT licensed. ~1,400 lines of Python, deps only `cryptography` + `requests`. 68 tests + CI (ubuntu/windows × py3.10–3.12). I'm looking for harsh feedback on the receipt schema (docs/receipt-schema.md) and claim kinds people actually need.
 
 ---
 
