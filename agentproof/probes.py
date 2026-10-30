@@ -149,15 +149,31 @@ def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str
     # destination — "final_url_matches_target" fails if a redirect chain ends
     # anywhere other than the exact target URL
     allow_redirects = expect.get("follow_redirects", True)
+    max_body = int(expect.get("max_body_bytes", 32 * 1024 * 1024))
     observed: dict[str, Any] = {"url": target, "method": method}
     try:
         resp = requests.request(method, target, timeout=timeout,
-                                allow_redirects=allow_redirects)
+                                allow_redirects=allow_redirects, stream=True)
     except Exception as e:  # noqa: BLE001 — network errors are UNVERIFIABLE
         observed["error"] = f"{type(e).__name__}: {e}"
         return observed, UNVERIFIABLE
 
-    body = resp.content
+    # stream the body with a hard cap — never buffer an unbounded response
+    body = b""
+    try:
+        for chunk in resp.iter_content(65536):
+            body += chunk
+            if len(body) > max_body:
+                resp.close()
+                observed.update({"status": resp.status_code,
+                                 "final_url": resp.url,
+                                 "body_limit_exceeded": True,
+                                 "max_body_bytes": max_body})
+                return observed, FAIL
+    except Exception as e:  # noqa: BLE001
+        resp.close()
+        observed["error"] = f"{type(e).__name__}: {e}"
+        return observed, UNVERIFIABLE
     observed.update({
         "status": resp.status_code,
         "final_url": resp.url,
@@ -401,7 +417,9 @@ def probe_exit_code(target: str, expect: dict[str, Any] | None) -> tuple[dict, s
     "allow_shell": true in --expect (operator-controlled) to run it at all.
     Only wire claims from agents the operator controls — whoever can submit
     this claim can execute arbitrary commands on the verifier's machine.
-    Bounds: hard timeout, output caps, no stdin.
+    Bounds: hard timeout, STREAMING output capture with a hard byte cap
+    (max_output_bytes, default 64MiB — output is never fully buffered),
+    process-group kill on timeout, no stdin.
 
     SEMANTICS: the probe RE-RUNS the command at verify time — it does not
     replay or observe the agent's original execution. Use it only for
@@ -416,6 +434,7 @@ def probe_exit_code(target: str, expect: dict[str, Any] | None) -> tuple[dict, s
     not run commands that print secrets.
     """
     import subprocess
+    import threading
 
     expect = expect or {}
     if not expect.get("allow_shell"):
@@ -424,39 +443,105 @@ def probe_exit_code(target: str, expect: dict[str, Any] | None) -> tuple[dict, s
                          '"allow_shell": true to opt in (see probe docstring)'}, FAIL
     timeout = expect.get("timeout_s", 30)
     workdir = expect.get("workdir") or None
+    max_out = int(expect.get("max_output_bytes", 64 * 1024 * 1024))
+    needle = expect.get("stdout_contains")
     observed: dict[str, Any] = {"command": target, "timeout_s": timeout}
+
+    def _kill(p):
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(p.pid), 9)
+            else:
+                p.kill()
+        except OSError:
+            try:
+                p.kill()
+            except OSError:
+                pass
+
+    kwargs: dict[str, Any] = dict(cwd=workdir, stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if os.name == "posix":
+        kwargs["start_new_session"] = True  # own process group -> clean kill
     try:
-        cp = subprocess.run(
-            target, shell=True, cwd=workdir,
-            capture_output=True, timeout=timeout,
-            stdin=subprocess.DEVNULL,
-        )
-    except subprocess.TimeoutExpired:
-        observed["timed_out"] = True
-        return observed, FAIL
+        proc = subprocess.Popen(target, shell=True, **kwargs)
     except OSError as e:
         observed["error"] = f"{type(e).__name__}: {e}"
         return observed, UNVERIFIABLE
 
-    stdout = cp.stdout or b""
-    stderr = cp.stderr or b""
+    # streaming drain: hash + count everything, BUFFER only the head excerpt,
+    # stderr rolling tail, and (optionally) a sliding window for substring
+    # search. Memory stays O(cap), not O(output).
+    st: dict[str, Any] = {"head": b"", "n": 0, "sha": hashlib.sha256(),
+                          "err_tail": b"", "exceeded": False,
+                          "found": False, "win": b""}
+
+    def _drain(stream, is_stdout: bool):
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                if is_stdout:
+                    st["n"] += len(chunk)
+                    st["sha"].update(chunk)
+                    if len(st["head"]) < 1024:
+                        st["head"] += chunk[:1024 - len(st["head"])]
+                    if needle is not None and not st["found"]:
+                        nb = needle.encode("utf-8") if isinstance(needle, str) else needle
+                        window = st["win"] + chunk
+                        if nb in window:
+                            st["found"] = True
+                        st["win"] = window[-max(len(nb) - 1, 1):]
+                    if st["n"] > max_out:
+                        st["exceeded"] = True
+                        _kill(proc)
+                        break
+                else:
+                    st["err_tail"] = (st["err_tail"] + chunk)[-256:]
+        except (OSError, ValueError):
+            pass
+
+    threads = [threading.Thread(target=_drain, args=(proc.stdout, True), daemon=True),
+               threading.Thread(target=_drain, args=(proc.stderr, False), daemon=True)]
+    for t in threads:
+        t.start()
+    try:
+        rc = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill(proc)
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
+        observed["timed_out"] = True
+        for t in threads:
+            t.join(timeout=2)
+        return observed, FAIL
+    for t in threads:
+        t.join(timeout=10)
+
+    if st["exceeded"]:
+        observed["output_limit_exceeded"] = True
+        observed["stdout_bytes"] = st["n"]
+        return observed, FAIL
+
+    stdout_text = st["head"].decode("utf-8", errors="replace")
     observed.update({
-        "exit_code": cp.returncode,
-        "stdout_bytes": len(stdout),
-        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
-        "stderr_tail": stderr.decode("utf-8", errors="replace")[-256:],
+        "exit_code": rc,
+        "stdout_bytes": st["n"],
+        "stdout_sha256": st["sha"].hexdigest(),
+        "stderr_tail": st["err_tail"].decode("utf-8", errors="replace"),
+        "stdout_head": stdout_text,
     })
-    stdout_text = stdout.decode("utf-8", errors="replace")
-    observed["stdout_head"] = stdout_text[:1024]
 
     verdict = PASS
     want = expect.get("exit_code", 0)
-    if cp.returncode != want:
+    if rc != want:
         verdict = FAIL
-    if "stdout_contains" in expect:
-        found = expect["stdout_contains"] in stdout_text
-        observed["stdout_contains_found"] = found
-        if not found:
+    if needle is not None:
+        observed["stdout_contains_found"] = st["found"]
+        if not st["found"]:
             verdict = FAIL
     if "stdout_sha256" in expect and observed["stdout_sha256"] != expect["stdout_sha256"]:
         verdict = FAIL

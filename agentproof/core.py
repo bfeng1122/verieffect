@@ -30,6 +30,55 @@ from cryptography.hazmat.primitives import serialization
 
 SCHEMA_VERSION = 1
 GENESIS_HASH = "0" * 64
+VALID_VERDICTS = ("PASS", "FAIL", "UNVERIFIABLE")
+
+import re as _re
+
+_TS_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_UUID_RE = _re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_HEX64_RE = _re.compile(r"^[0-9a-f]{64}$")
+_HEX128_RE = _re.compile(r"^[0-9a-f]{128}$")
+
+
+def schema_errors(receipt: Any) -> list[str]:
+    """Strict conformance check against the v1 receipt protocol.
+
+    Separate from signature validity: a receipt can be cryptographically
+    signed yet malformed (a signer bug or a hand-built forgery with a
+    leaked key). Returns [] when conformant.
+    """
+    errs: list[str] = []
+    if not isinstance(receipt, dict):
+        return ["receipt is not a JSON object"]
+    if receipt.get("v") != SCHEMA_VERSION:
+        errs.append(f"v must be {SCHEMA_VERSION}")
+    cid = receipt.get("claim_id")
+    if not isinstance(cid, str) or not _UUID_RE.match(cid):
+        errs.append("claim_id must be a lowercase uuid4 string")
+    if not isinstance(receipt.get("agent_id"), str) or not receipt.get("agent_id"):
+        errs.append("agent_id must be a non-empty string")
+    if not isinstance(receipt.get("kind"), str) or not receipt.get("kind"):
+        errs.append("kind must be a non-empty string")
+    if "target" not in receipt:
+        errs.append("target is required")
+    if not isinstance(receipt.get("expect"), dict):
+        errs.append("expect must be an object")
+    if not isinstance(receipt.get("observed"), dict):
+        errs.append("observed must be an object")
+    if receipt.get("verdict") not in VALID_VERDICTS:
+        errs.append(f"verdict must be one of {VALID_VERDICTS}")
+    ts = receipt.get("checked_at")
+    if not isinstance(ts, str) or not _TS_RE.match(ts):
+        errs.append("checked_at must be ISO8601 UTC (YYYY-MM-DDTHH:MM:SSZ)")
+    prh = receipt.get("prev_receipt_hash")
+    if not isinstance(prh, str) or not _HEX64_RE.match(prh):
+        errs.append("prev_receipt_hash must be 64 lowercase hex chars")
+    sig = receipt.get("sig")
+    if not isinstance(sig, str) or not sig.startswith("ed25519:") \
+            or not _HEX128_RE.match(sig[len("ed25519:"):]):
+        errs.append("sig must be 'ed25519:' + 128 lowercase hex chars")
+    return errs
 
 
 # ---------------------------------------------------------------- canonical json

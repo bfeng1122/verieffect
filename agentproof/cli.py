@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 from .core import (
-    ChainStore, Keyring, receipt_body, sign_receipt,
+    ChainStore, Keyring, receipt_body, schema_errors, sign_receipt,
     verify_chain, verify_receipt,
 )
 from .probes import PROBES
@@ -116,18 +116,25 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(f"INVALID: cannot read public key: {e}", file=sys.stderr)
         return 2
     ok, why = verify_receipt(receipt, pub)
+    schema_errs = schema_errors(receipt)
     if ok:
         out = {"signature_ok": True, "detail": why,
+               "schema_valid": not schema_errs,
                "verdict": receipt.get("verdict"),
                "claim_id": receipt.get("claim_id")}
+        if schema_errs:
+            out["schema_errors"] = schema_errs
     else:
         # signature failed — the receipt's own fields are UNTRUSTED claims;
         # label them as such rather than echoing a possibly forged "PASS"
         out = {"signature_ok": False, "detail": why,
+               "schema_valid": not schema_errs,
                "unverified_claim": {"verdict": receipt.get("verdict"),
                                     "claim_id": receipt.get("claim_id")}}
+        if schema_errs:
+            out["schema_errors"] = schema_errs
     print(json.dumps(out, indent=2))
-    return 0 if ok else 1
+    return 0 if (ok and not schema_errs) else 1
 
 
 def cmd_audit(args: argparse.Namespace) -> int:

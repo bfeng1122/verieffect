@@ -46,6 +46,52 @@ def sha256_hex(b: bytes) -> str:
 
 SCHEMA_VERSION = 1
 GENESIS = "0" * 64
+VALID_VERDICTS = ("PASS", "FAIL", "UNVERIFIABLE")
+
+import re as _re
+
+_TS_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_UUID_RE = _re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_HEX64_RE = _re.compile(r"^[0-9a-f]{64}$")
+_HEX128_RE = _re.compile(r"^[0-9a-f]{128}$")
+
+
+def schema_errors(receipt) -> list:
+    """Strict v1 protocol conformance check (kept in sync with
+    agentproof.core.schema_errors — the standalone verifier has zero
+    internal imports by design, so this is deliberately duplicated)."""
+    errs = []
+    if not isinstance(receipt, dict):
+        return ["receipt is not a JSON object"]
+    if receipt.get("v") != SCHEMA_VERSION:
+        errs.append("v must be 1")
+    cid = receipt.get("claim_id")
+    if not isinstance(cid, str) or not _UUID_RE.match(cid):
+        errs.append("claim_id must be a lowercase uuid4 string")
+    if not isinstance(receipt.get("agent_id"), str) or not receipt.get("agent_id"):
+        errs.append("agent_id must be a non-empty string")
+    if not isinstance(receipt.get("kind"), str) or not receipt.get("kind"):
+        errs.append("kind must be a non-empty string")
+    if "target" not in receipt:
+        errs.append("target is required")
+    if not isinstance(receipt.get("expect"), dict):
+        errs.append("expect must be an object")
+    if not isinstance(receipt.get("observed"), dict):
+        errs.append("observed must be an object")
+    if receipt.get("verdict") not in VALID_VERDICTS:
+        errs.append("verdict must be PASS/FAIL/UNVERIFIABLE")
+    ts = receipt.get("checked_at")
+    if not isinstance(ts, str) or not _TS_RE.match(ts):
+        errs.append("checked_at must be ISO8601 UTC (YYYY-MM-DDTHH:MM:SSZ)")
+    prh = receipt.get("prev_receipt_hash")
+    if not isinstance(prh, str) or not _HEX64_RE.match(prh or ""):
+        errs.append("prev_receipt_hash must be 64 lowercase hex chars")
+    sig = receipt.get("sig")
+    if not isinstance(sig, str) or not sig.startswith("ed25519:") \
+            or not _HEX128_RE.match(sig[len("ed25519:"):]):
+        errs.append("sig must be 'ed25519:' + 128 lowercase hex chars")
+    return errs
 
 
 def verify_one(receipt, pub) -> tuple[bool, str]:
@@ -108,10 +154,15 @@ def main() -> int:
             print(f"INVALID: cannot parse receipt file: {e}")
             return 1
         ok, why = verify_one(receipt, pub)
+        serrs = schema_errors(receipt)
         cid = receipt.get("claim_id") if isinstance(receipt, dict) else "?"
         vd = receipt.get("verdict") if isinstance(receipt, dict) else "?"
-        print(f"{'VALID' if ok else 'INVALID'}: {why} (claim {cid}, verdict {vd})")
-        return 0 if ok else 1
+        status = "VALID" if (ok and not serrs) else "INVALID"
+        parts = [why]
+        if serrs:
+            parts.append("schema: " + "; ".join(serrs))
+        print(f"{status}: {' | '.join(parts)} (claim {cid}, verdict {vd})")
+        return 0 if (ok and not serrs) else 1
 
     prev = GENESIS
     n = 0
@@ -140,6 +191,8 @@ def main() -> int:
                 continue
             n += 1
             ok, why = verify_one(r, pub)
+            serrs = schema_errors(r)
+            schema_ok = not serrs
             chain_ok = isinstance(r, dict) and r.get("prev_receipt_hash") == prev
             agent_ok = (args.agent is None
                         or (isinstance(r, dict) and r.get("agent_id") == args.agent))
@@ -150,15 +203,18 @@ def main() -> int:
                     if prev_checked_at is not None and ts < prev_checked_at:
                         ts_ok = False
                     prev_checked_at = ts
-            if not ok or not chain_ok or not agent_ok or not ts_ok:
+            if not ok or not chain_ok or not agent_ok or not ts_ok or not schema_ok:
                 bad += 1
-                note = f"sig={why} chain_ok={chain_ok}"
+                note = f"sig={why} schema_ok={schema_ok} chain_ok={chain_ok}"
                 if args.agent is not None:
                     note += f" agent_ok={agent_ok}"
                 if not ts_ok:
                     note += " ts_regression=True"
                 cid = r.get("claim_id") if isinstance(r, dict) else "?"
                 print(f"  [{n}] {cid}: {note}")
+                if serrs:
+                    for se in serrs[:4]:
+                        print(f"      schema: {se}")
             if isinstance(r, dict):
                 try:
                     prev = sha256_hex(canonical_json(r))

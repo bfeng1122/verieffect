@@ -29,10 +29,25 @@ spec; `verify_receipt.py` in the repository root is the reference verifier.
 
 ## Verification procedure
 
+**Three independent notions of validity** (a receipt must satisfy all three to
+be trusted; the tools report them separately):
+
+- **SIGNATURE_VALID** — the Ed25519 signature verifies over the canonical JSON.
+  Proves *this key holder* signed these exact bytes. Does NOT prove the fields
+  are well-formed.
+- **SCHEMA_VALID** — the receipt conforms to the v1 protocol: required fields
+  present, `claim_id` a lowercase uuid4, `verdict` one of PASS/FAIL/UNVERIFIABLE,
+  `checked_at` ISO8601-UTC, `prev_receipt_hash`/`sig` correct hex shapes,
+  `expect`/`observed` objects. A signed-but-malformed receipt is caught here
+  (`schema_errors()`), separating "authentically signed" from "protocol-conformant".
+- **CHAIN_VALID** — the receipt links to its predecessor, belongs to the claimed
+  agent, and doesn't backdate. Checked by the audit walk.
+
 Single receipt:
 1. Remove `sig`; recompute canonical JSON of the remainder.
-2. Verify the Ed25519 signature against the verifier's public key.
-3. Any failure ⇒ receipt invalid. (Verdicts are point-in-time evidence; verification
+2. Verify the Ed25519 signature against the verifier's public key (SIGNATURE_VALID).
+3. Run the schema conformance check (SCHEMA_VALID).
+4. Any failure ⇒ receipt invalid. (Verdicts are point-in-time evidence; verification
    does NOT re-run probes.)
 
 Chain (audit):
@@ -66,10 +81,18 @@ Chain (audit):
   Redirects are followed by default; pass `"follow_redirects": false` to treat a
   redirect as the final response, or `"final_url_matches_target": true` to FAIL
   when the redirect chain ends anywhere other than the exact target URL.
+  Response bodies are STREAMED with a hard cap (`max_body_bytes`, default
+  32 MiB): exceeding it FAILs with `observed.body_limit_exceeded` and the
+  connection is closed — the verifier's memory is never at the mercy of the
+  target.
 - `exit_code` is gated OFF by default (`allow_shell: true` required). It is NOT
   sandboxed: the command runs with the verifier's full OS privileges. Bounds are a
-  hard timeout (default 30 s), no stdin, and output caps. Timeout ⇒ `FAIL`
-  (`observed.timed_out: true`). Stdout/stderr excerpts are stored in the signed
+  hard timeout (default 30 s), no stdin, and STREAMING output capture with a hard
+  byte cap (`max_output_bytes`, default 64 MiB): stdout is hashed and counted
+  chunk-by-chunk with only a 1 KiB head excerpt buffered; exceeding the cap kills
+  the process (whole process group on POSIX) and FAILs with
+  `observed.output_limit_exceeded`. On timeout the process group is killed, not
+  just the shell. Stdout/stderr excerpts are stored in the signed
   receipt — never run commands that print secrets.
 - `exit_code` RE-RUNS the command at verify time; it does not observe the claimer's
   original execution. A receipt therefore attests "this command exits N *now*," not

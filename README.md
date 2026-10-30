@@ -87,6 +87,21 @@ and cron jobs can branch on verification results directly.
 - `data/chains/chain_<agent>_<hash8>.jsonl` — append-only receipt chain per agent.
 - Override the root with `AGENTPROOF_HOME=/some/path`.
 
+## How it fits together
+
+```mermaid
+flowchart LR
+    A[AI Agent] -->|"claim: I did X"| B[AgentProof CLI/library]
+    B --> C{Deterministic Probe}
+    C -->|reads| D[Real System State<br/>files · HTTP · DB · exit codes]
+    D --> C
+    C -->|PASS / FAIL / UNVERIFIABLE| E[Ed25519 Signing]
+    E --> F[Signed Receipt]
+    F --> G[Per-Agent Hash Chain<br/>append-only JSONL]
+    G --> H[Offline Verifier<br/>verify_receipt.py]
+    H --> I[Chain Audit<br/>+ external head anchor]
+```
+
 ## Claim kinds
 
 | Kind | Target | Proves |
@@ -167,11 +182,15 @@ Full details in [receipt-schema.md](docs/receipt-schema.md).
 
 ## Status
 
-MVP. 87-test suite (`python tests/test_all.py` with the venv python; CI runs
+MVP (Alpha). 91-test suite (`python tests/test_all.py` with the venv python; CI runs
 ubuntu+windows × Python 3.10–3.12), in daily production use verifying a 24/7
-paper-trading agent stack (fills, portfolio state, backups) since Oct 2026 — 38+
+paper-trading agent stack (fills, portfolio state, backups) since Oct 2026 — 40+
 receipts and a deliberate tamper test that breaks the chain as designed.
 Roadmap: hosted verifier API, `kid` key rotation, `claimed_at`/`checked_at` split,
 connector library (Stripe/broker/Postgres), MCP server.
+
+See [examples/](examples/README.md) for runnable examples of all four probe kinds,
+[CONTRIBUTING.md](CONTRIBUTING.md) for adding probes, and
+[SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 MIT licensed.

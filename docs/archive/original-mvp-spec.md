@@ -5,7 +5,7 @@
 > (not SQLite), no `agentproofd` daemon (library + CLI), bare 64-hex
 > `prev_receipt_hash` (no `sha256:` prefix), `checked_at` is a top-level
 > receipt field, CLI flags are `--target`/`--expect`. Normative format:
-> [docs/receipt-schema.md](docs/receipt-schema.md).
+> [docs/receipt-schema.md](../receipt-schema.md).
 
 ## What it is
 A tiny service that lets an agent prove a claim about the real world with a

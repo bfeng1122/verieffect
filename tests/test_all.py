@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import uuid as uuid_mod
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -219,6 +220,31 @@ with tempfile.TemporaryDirectory() as tmp:
     obs, v = probe_db_row_matches(f"sqlite:///{sq.as_posix()}", {"query": "select"})
     check("bare 'select' (keyword + EOL) reaches sqlite, errors cleanly",
           v == UNVERIFIABLE and "refused" not in str(obs.get("error", "")))
+
+    # --- exit_code: streaming output cap kills runaway producers ---
+    obs, v = probe_exit_code(
+        f'"{PY}" -c "import sys; sys.stdout.write(\'A\'*(50*1024*1024))"',
+        {**SHELL_OK, "max_output_bytes": 1024 * 1024})
+    check("output over cap -> FAIL with output_limit_exceeded",
+          v == FAIL and obs.get("output_limit_exceeded") is True)
+    obs, v = probe_exit_code(f'"{PY}" -c "print(\'needle123\')"',
+                             {**SHELL_OK, "stdout_contains": "needle123"})
+    check("streaming substring search still works", v == PASS)
+
+    # --- strict schema validation (signed-but-malformed detection) ---
+    from agentproof.core import schema_errors
+    bad_signed = sign_receipt(
+        {"v": 1, "claim_id": "not-a-uuid", "agent_id": "x", "kind": "file_exists",
+         "target": "y", "expect": {}, "observed": {}, "verdict": "MAYBE",
+         "checked_at": "yesterday", "prev_receipt_hash": GENESIS_HASH}, priv)
+    errs = schema_errors(bad_signed)
+    ok_s, _ = verify_receipt(bad_signed, pub_pem)
+    check("signed-but-malformed: signature valid BUT schema errors listed",
+          ok_s and len(errs) >= 3)
+    good_signed = sign_receipt(
+        receipt_body(str(uuid_mod.uuid4()), "schema-ok", "file_exists", "x",
+                     {}, {"ok": True}, "PASS", GENESIS_HASH), priv)
+    check("real receipts pass strict schema", schema_errors(good_signed) == [])
 
     print("== CLI end-to-end ==")
     env = dict(os.environ, AGENTPROOF_HOME=str(tmp / "cli_home"))
