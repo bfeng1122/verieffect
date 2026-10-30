@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentproof"
-version = "0.1.0"
-description = "Deterministic verification for AI agent work — signed, tamper-evident receipts"
+name = "verieffect"
+version = "0.1.0a1"
+description = "Independent deterministic verification for AI agents — signed, offline-verifiable receipts"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -25,11 +25,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bfeng1122/agentproof"
-Repository = "https://github.com/bfeng1122/agentproof"
+Homepage = "https://github.com/bfeng1122/verieffect"
+Repository = "https://github.com/bfeng1122/verieffect"
 
 [project.scripts]
-agentproof = "agentproof.cli:main"
+verieffect = "verieffect.cli:main"
 
 [tool.setuptools]
-packages = ["agentproof"]
+packages = ["verieffect"]

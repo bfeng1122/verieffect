@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone offline verifier — needs only `cryptography`, no agentproof install.
+"""Standalone offline verifier — needs only `cryptography`, no verieffect install.
 
 This file is what we publish with the receipt JSON schema: anyone (operator,
 auditor, a different machine) can validate a receipt or a whole chain file
@@ -7,8 +7,8 @@ using only `cryptography`. Deliberately zero internal imports. It prints
 INVALID/malformed rather than ever raising on untrusted input.
 
 Usage:
-  python verify_receipt.py --pubkey agentproof_ed25519.pub receipt.json
-  python verify_receipt.py --pubkey agentproof_ed25519.pub --chain chain_myagent.jsonl
+  python verify_receipt.py --pubkey verieffect_ed25519.pub receipt.json
+  python verify_receipt.py --pubkey verieffect_ed25519.pub --chain chain_myagent.jsonl
       [--agent myagent] [--expect-count N] [--expect-head HASH]
 
 Chain mode walks FORWARD from genesis, so it detects edited receipts and
@@ -59,7 +59,7 @@ _HEX128_RE = _re.compile(r"^[0-9a-f]{128}$")
 
 def schema_errors(receipt) -> list:
     """Strict v1 protocol conformance check (kept in sync with
-    agentproof.core.schema_errors — the standalone verifier has zero
+    verieffect.core.schema_errors — the standalone verifier has zero
     internal imports by design, so this is deliberately duplicated)."""
     errs = []
     if not isinstance(receipt, dict):

@@ -1,4 +1,4 @@
-# AgentProof Receipt Format — v1
+# Verieffect Receipt Format — v1
 
 A receipt is a JSON object proving that a deterministic check ran against a real
 system at a specific time, signed by the verifier. This document is the normative
@@ -121,7 +121,7 @@ chain is audited with `--agent`) belongs to the claimed agent.
 4. **Key co-location.** The signing key lives on the operator's machine. On POSIX it
    is chmod 0600; on Windows `os.chmod` only toggles the read-only bit — an attacker
    with code execution as the same OS user can read the key and forge receipts.
-   AgentProof's threat model is the **non-adversarial** failure mode (the agent
+   Verieffect's threat model is the **non-adversarial** failure mode (the agent
    bullshitting about whether side effects landed), not an actively hostile agent
    on the same host. For that, run the verifier as a separate OS user or host.
 5. **Clock trust.** `checked_at` and file mtimes are host-clock values; NTP sanity

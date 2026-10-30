@@ -407,13 +407,13 @@ def _dot_or_get(row: Any, key: str) -> Any:
 # ---------------------------------------------------------------- exit_code
 
 def probe_exit_code(target: str, expect: dict[str, Any] | None) -> tuple[dict, str]:
-    """target: shell command re-run BY agentproof (the claimer's reported
+    """target: shell command re-run BY verieffect (the claimer's reported
     result is never trusted). expect keys (all optional):
       exit_code (int, default 0), stdout_contains (str), stdout_sha256 (str),
       timeout_s (default 30), workdir (cwd for the run).
 
     SECURITY: this probe is NOT sandboxed. The command executes with
-    agentproof's full OS privileges. It is gated OFF by default: pass
+    verieffect's full OS privileges. It is gated OFF by default: pass
     "allow_shell": true in --expect (operator-controlled) to run it at all.
     Only wire claims from agents the operator controls — whoever can submit
     this claim can execute arbitrary commands on the verifier's machine.

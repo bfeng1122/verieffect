@@ -1,29 +1,29 @@
 # Examples
 
-Runnable examples for all four probe kinds. All use a scratch `AGENTPROOF_HOME`
+Runnable examples for all four probe kinds. All use a scratch `VERIEFFECT_HOME`
 so they don't touch your real chains. On Windows cmd/PowerShell, swap the JSON
 quoting per the README note (`--expect "{\"min_bytes\": 1024}"`).
 
 Set up once:
 
 ```bash
-export AGENTPROOF_HOME=/tmp/ap-examples        # Windows: set AGENTPROOF_HOME=...
+export VERIEFFECT_HOME=/tmp/ap-examples        # Windows: set VERIEFFECT_HOME=...
 PY=".venv/Scripts/python"                       # Linux/macOS: .venv/bin/python
-mkdir -p "$AGENTPROOF_HOME"
+mkdir -p "$VERIEFFECT_HOME"
 ```
 
 ## 1. file_exists — "the report was written"
 
 ```bash
 printf 'hello world\n' > /tmp/report.csv
-$PY -m agentproof.cli claim file_exists --agent demo \
+$PY -m verieffect.cli claim file_exists --agent demo \
   --target /tmp/report.csv --expect '{"min_bytes": 5, "contains": "hello"}'
 ```
 
 Freshness check (written in the last hour) + exact hash:
 
 ```bash
-$PY -m agentproof.cli claim file_exists --agent demo \
+$PY -m verieffect.cli claim file_exists --agent demo \
   --target /tmp/report.csv \
   --expect '{"modified_within_s": 3600, "sha256": "<64-hex>"}'
 ```
@@ -31,14 +31,14 @@ $PY -m agentproof.cli claim file_exists --agent demo \
 ## 2. http_ok — "the health endpoint is up"
 
 ```bash
-$PY -m agentproof.cli claim http_ok --agent demo \
+$PY -m verieffect.cli claim http_ok --agent demo \
   --target https://example.com --expect '{"status": 200, "body_contains": "Example"}'
 ```
 
 Strict (no redirects, exact destination, hash-pinned body):
 
 ```bash
-$PY -m agentproof.cli claim http_ok --agent demo \
+$PY -m verieffect.cli claim http_ok --agent demo \
   --target https://api.example.com/health \
   --expect '{"status": 200, "follow_redirects": false,
              "final_url_matches_target": true, "max_body_bytes": 65536}'
@@ -49,7 +49,7 @@ $PY -m agentproof.cli claim http_ok --agent demo \
 JSONL ledger (append-only row store):
 
 ```bash
-$PY -m agentproof.cli claim db_row_matches --agent demo \
+$PY -m verieffect.cli claim db_row_matches --agent demo \
   --target ./ledger.jsonl \
   --expect '{"where": {"ticker": "NVDA", "side": "buy"}, "match": {"qty": 10}}'
 ```
@@ -57,7 +57,7 @@ $PY -m agentproof.cli claim db_row_matches --agent demo \
 JSON document (dotted paths):
 
 ```bash
-$PY -m agentproof.cli claim db_row_matches --agent demo \
+$PY -m verieffect.cli claim db_row_matches --agent demo \
   --target ./portfolio.json \
   --expect '{"fields": {"cash": 999000.0, "positions.NVDA.qty": 10}}'
 ```
@@ -65,7 +65,7 @@ $PY -m agentproof.cli claim db_row_matches --agent demo \
 SQLite (SELECT-only):
 
 ```bash
-$PY -m agentproof.cli claim db_row_matches --agent demo \
+$PY -m verieffect.cli claim db_row_matches --agent demo \
   --target "sqlite:///./app.db" \
   --expect '{"query": "SELECT status FROM jobs WHERE id = 42", "rows": [["done"]]}'
 ```
@@ -76,7 +76,7 @@ Gated OFF by default; opt in with `allow_shell`. Use only read-only/idempotent
 commands — the probe RE-RUNS the command at verify time.
 
 ```bash
-$PY -m agentproof.cli claim exit_code --agent demo \
+$PY -m verieffect.cli claim exit_code --agent demo \
   --target "git status --porcelain" \
   --expect '{"allow_shell": true, "exit_code": 0, "stdout_sha256": "<64-hex-of-empty>"}'
 ```
@@ -84,9 +84,9 @@ $PY -m agentproof.cli claim exit_code --agent demo \
 ## Verify + audit
 
 ```bash
-$PY verify_receipt.py --pubkey "$AGENTPROOF_HOME/keys/agentproof_ed25519.pub" \
+$PY verify_receipt.py --pubkey "$VERIEFFECT_HOME/keys/verieffect_ed25519.pub" \
   receipt.json
-$PY -m agentproof.cli audit --agent demo
+$PY -m verieffect.cli audit --agent demo
 ```
 
 ## Anchor the chain head (anti-truncation)
@@ -95,15 +95,15 @@ Print the anchor, then publish it somewhere append-only (a git commit, an
 OpenTimestamps stamp, a message to yourself). Later audits compare against it:
 
 ```bash
-$PY -m agentproof.cli checkpoint --agent demo --json
+$PY -m verieffect.cli checkpoint --agent demo --json
 # {"agent_id":"demo","count":7,"head":"a614896c...","as_of":"..."}
-$PY -m agentproof.cli audit --agent demo --expect-count 7 --expect-head a614896c...
+$PY -m verieffect.cli audit --agent demo --expect-count 7 --expect-head a614896c...
 ```
 
 ## Branch on the result in a script
 
 ```bash
-if $PY -m agentproof.cli claim file_exists --agent cron \
+if $PY -m verieffect.cli claim file_exists --agent cron \
      --target /var/backups/db.dump --expect '{"min_bytes": 1048576}'; then
   echo "backup verified"
 else

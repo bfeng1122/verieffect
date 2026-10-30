@@ -4,7 +4,7 @@
 
 1. `My agent said "backup completed" — the backup never ran. So I built signed receipts for agent work.`
 2. `I run a 24/7 AI trading pipeline. It caught me: 26% of agent tasks falsely claim success.`
-3. `Built AgentProof: deterministic, signed receipts so your agent can't lie about finishing the job.`
+3. `Built Verieffect: verify the effect, not the claim — deterministic checks + signed receipts for AI agent work.`
 
 **Body:**
 
@@ -14,9 +14,9 @@ The evidence says: not always. An analysis of the public τ-bench retail benchma
 
 I hit this in my own setup on day one. My bookkeeper filed a claim about a backup path that didn't exist. Nothing broke because I caught it — but if I hadn't been checking, I'd have been trusting receipts for a backup that never ran.
 
-So I built **AgentProof**:
+So I built **Verieffect**:
 
-https://github.com/bfeng1122/agentproof
+https://github.com/bfeng1122/verieffect
 
 **How it works:**
 - Agent makes a claim (`file_exists`, `http_ok`, `db_row_matches`, `exit_code`).
@@ -31,6 +31,8 @@ https://github.com/bfeng1122/agentproof
 **Dangerous probes are gated:** the `exit_code` probe runs with verifier privileges, so it's off by default (`allow_shell` opt-in); `http_ok` refuses non-GET/HEAD methods unless you explicitly allow them.
 
 **Exit codes** (0/1/2) as the integration surface — cron and shell scripts branch on verification directly.
+
+**Credit where it's due — the principle isn't new.** Harper's "Re-Perceived Effects" (Sept 2026) and EffectMatch (arXiv:2609.31301) both describe checking the effect rather than trusting the self-report; they're cited in the README. And Treeship/Attestroot/Logsiegel all ship signed, chained agent receipts. The distinction I'm claiming is narrow but real: those tools *record* what the agent did and sign the record (Attestroot says outright a lying agent's capture "would seal and verify perfectly"), while Verieffect *re-queries the system of record* at verify time. Verieffect is a working implementation + the offline-receipt packaging, not a new idea.
 
 It's been in production for two weeks: 40+ receipts across trade fills and backup checks, plus a deliberate tamper test that breaks the chain exactly as designed. Before launch I also had AI agents red-team the repo in multiple rounds — one reproduced a chain-relabeling attack, another caught the chain lock silently giving up under contention on Windows; both fixed and regression-tested. The tool's whole thesis, applied to itself.
 

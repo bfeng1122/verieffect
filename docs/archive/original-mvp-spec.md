@@ -1,8 +1,8 @@
-# AgentProof — Verified Claims for Agent Work
+# Verieffect — Verified Claims for Agent Work
 **One-page MVP spec · v0.1 · 2026-10-15 · Helen + Bing**
 
 > **Historical planning doc.** The shipped system differs: JSONL chain files
-> (not SQLite), no `agentproofd` daemon (library + CLI), bare 64-hex
+> (not SQLite), no `verieffectd` daemon (library + CLI), bare 64-hex
 > `prev_receipt_hash` (no `sha256:` prefix), `checked_at` is a top-level
 > receipt field, CLI flags are `--target`/`--expect`. Normative format:
 > [docs/receipt-schema.md](../receipt-schema.md).
@@ -12,16 +12,16 @@ A tiny service that lets an agent prove a claim about the real world with a
 deterministic check, and emits a signed, tamper-evident receipt. No LLM in the
 verdict path. The receipt is the product.
 
-Tagline: *"Agents claim. AgentProof checks."*
+Tagline: *"Agents claim. Verieffect checks."*
 
 ## The core primitive
 ```
 claim:    {"kind": "file_exists",  "target": "E:/reports/out.csv", "expect": {"min_bytes": 1024}}
-check:    deterministic probe run BY agentproof (not by the claiming agent)
+check:    deterministic probe run BY verieffect (not by the claiming agent)
 verdict:  PASS | FAIL | UNVERIFIABLE  (+ evidence snapshot)
-receipt:  JSON, Ed25519-signed by agentproof, hash-chained per agent
+receipt:  JSON, Ed25519-signed by verieffect, hash-chained per agent
 ```
-The claimer never self-reports success. AgentProof owns the probe, so the
+The claimer never self-reports success. Verieffect owns the probe, so the
 verdict is independent of the agent that benefits from it.
 
 ## Hello-world claim kinds (weekend scope, all deterministic)
@@ -37,7 +37,7 @@ verdict is independent of the agent that benefits from it.
 {
   "v": 1,
   "claim_id": "uuid",
-  "agent_id": "did:agentproof:<name>",          // MVP: free-text operator-chosen
+  "agent_id": "did:verieffect:<name>",          // MVP: free-text operator-chosen
                                                 // id; did:/registered per-agent
                                                 // keys are roadmap (single
                                                 // verifier key in v1)
@@ -47,23 +47,23 @@ verdict is independent of the agent that benefits from it.
   "observed": {"status": 200, "body_sha256": "...", "checked_at": "ISO8601"},
   "verdict": "PASS",
   "prev_receipt_hash": "sha256:...",             // hash chain per agent
-  "sig": "ed25519:<agentproof-key>"
+  "sig": "ed25519:<verieffect-key>"
 }
 ```
 - Hash chain = tamper-evidence + cheap audit history ("show me everything this
   agent verified last night").
-- Signing key lives ONLY in agentproof; claims arrive over local IPC/HTTP.
+- Signing key lives ONLY in verieffect; claims arrive over local IPC/HTTP.
 - Format is the open-spec candidate: publish the JSON schema + verification
   script so anyone can validate receipts offline (this is the protocol play —
   adoption vehicle, free, no liability).
 
 ## Architecture (MVP, zero infra spend)
-- **agentproofd** — Python daemon on Bing's server. Endpoints: `POST /claims`,
+- **verieffectd** — Python daemon on Bing's server. Endpoints: `POST /claims`,
   `GET /receipts/{agent_id}`, `GET /health`. SQLite for the chain. Ed25519 via
   `pynacl` or stdlib `cryptography`.
-- **agentproof-cli** — `agentproof claim http_ok --url ... --expect-status 200`
+- **verieffect-cli** — `verieffect claim http_ok --url ... --expect-status 200`
   → prints receipt JSON. Any agent with a terminal tool can use it TODAY.
-- **Hermes skill** — `agentproof-verify`: teaches agents to claim→verify→attach
+- **Hermes skill** — `verieffect-verify`: teaches agents to claim→verify→attach
   receipt. First customer integration.
 
 ## First real customer: the trading pipeline (dogfood)
@@ -109,5 +109,5 @@ about market demand.
   stack (no-regret downside).
 
 ## Positioning one-liner
-"Veridatum found 26% of agent tasks falsely claimed success. AgentProof makes
+"Veridatum found 26% of agent tasks falsely claimed success. Verieffect makes
 success provable — deterministic checks, signed receipts, no LLM in the loop."

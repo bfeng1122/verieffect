@@ -1,18 +1,18 @@
 """
-agentproof CLI — claim → probe → signed receipt.
+verieffect CLI — claim → probe → signed receipt.
 
 Usage:
-  agentproof claim file_exists --agent my-agent --target E:/reports/out.csv \
+  verieffect claim file_exists --agent my-agent --target E:/reports/out.csv \
       --expect '{"min_bytes": 1024}'
-  agentproof claim http_ok --agent my-agent --target https://example.com \
+  verieffect claim http_ok --agent my-agent --target https://example.com \
       --expect '{"status": 200, "body_contains": "Example"}'
-  agentproof verify receipt.json            # single receipt (offline)
-  agentproof audit --agent my-agent         # full chain audit
-  agentproof checkpoint --agent my-agent    # head+count for external anchoring
-  agentproof pubkey                          # print verifier public key (PEM)
+  verieffect verify receipt.json            # single receipt (offline)
+  verieffect audit --agent my-agent         # full chain audit
+  verieffect checkpoint --agent my-agent    # head+count for external anchoring
+  verieffect pubkey                          # print verifier public key (PEM)
 
-Data/key layout (default under ./data, override with AGENTPROOF_HOME):
-  data/keys/agentproof_ed25519.{pem,pub}
+Data/key layout (default under ./data, override with VERIEFFECT_HOME):
+  data/keys/verieffect_ed25519.{pem,pub}
   data/chains/chain_<agent>_<hash8>.jsonl   (legacy chain_<agent>.jsonl still read)
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 def home() -> Path:
-    return Path(os.environ.get("AGENTPROOF_HOME", Path.cwd() / "data"))
+    return Path(os.environ.get("VERIEFFECT_HOME", Path.cwd() / "data"))
 
 
 def cmd_claim(args: argparse.Namespace) -> int:
@@ -111,7 +111,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(f"INVALID: cannot parse receipt JSON: {e}", file=sys.stderr)
         return 2
     try:
-        pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
+        pub = Path(args.pubkey or (home() / "keys" / "verieffect_ed25519.pub")).read_text()
     except OSError as e:
         print(f"INVALID: cannot read public key: {e}", file=sys.stderr)
         return 2
@@ -148,7 +148,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         print(f"no receipts for agent {args.agent}")
         return 2
     try:
-        pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
+        pub = Path(args.pubkey or (home() / "keys" / "verieffect_ed25519.pub")).read_text()
     except OSError as e:
         print(f"AUDIT ABORTED: cannot read public key: {e}", file=sys.stderr)
         return 2
@@ -222,7 +222,7 @@ def cmd_pubkey(_: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="agentproof")
+    ap = argparse.ArgumentParser(prog="verieffect")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("claim", help="run a probe and emit a signed receipt")

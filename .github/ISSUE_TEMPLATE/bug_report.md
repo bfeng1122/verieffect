@@ -9,7 +9,7 @@ labels: bug
 **Environment:**
 - OS:
 - Python version:
-- AgentProof commit:
+- Verieffect commit:
 
 **Output** (redact secrets — stdout excerpts can contain sensitive data):
 

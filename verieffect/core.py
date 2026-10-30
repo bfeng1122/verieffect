@@ -1,12 +1,13 @@
 """
-agentproof — deterministic claim verification with signed, hash-chained receipts.
+verieffect — deterministic claim verification with signed, hash-chained receipts.
 
 Core invariant: NO LLM in the verdict path. Verdicts come only from probes that
 read systems of record (filesystem, HTTP, DB, process state). The claimer never
-self-reports success — agentproof owns the check.
+self-reports success — verieffect owns the check.
 
 Receipt integrity:
-- Ed25519 keypair, private key stored locally (0600), never leaves the machine.
+- Ed25519 keypair, private key stored locally (0600 on POSIX; see the Windows
+  caveat in Keyring.load_or_create), never leaves the machine.
 - Per-agent hash chain: each receipt embeds sha256 of the previous receipt for
   that agent_id, so tampering/deletion is detectable offline.
 - Canonical JSON (sorted keys, UTF-8, no extra whitespace) is what gets signed.
@@ -100,12 +101,12 @@ def sha256_hex(data: bytes) -> str:
 # ---------------------------------------------------------------- key management
 
 class Keyring:
-    """Ed25519 identity for the agentproof verifier itself."""
+    """Ed25519 identity for the verieffect verifier itself."""
 
     def __init__(self, key_dir: Path):
         self.key_dir = Path(key_dir)
-        self.priv_path = self.key_dir / "agentproof_ed25519.pem"
-        self.pub_path = self.key_dir / "agentproof_ed25519.pub"
+        self.priv_path = self.key_dir / "verieffect_ed25519.pem"
+        self.pub_path = self.key_dir / "verieffect_ed25519.pub"
 
     def load_or_create(self) -> Ed25519PrivateKey:
         if self.priv_path.exists():

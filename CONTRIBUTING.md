@@ -6,15 +6,15 @@ reviews, bug reports, and probe ideas are all welcome.
 ## Development setup
 
 ```bash
-git clone https://github.com/bfeng1122/agentproof.git
-cd agentproof
+git clone https://github.com/bfeng1122/verieffect.git
+cd verieffect
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt   # Linux/macOS: .venv/bin/python
 .venv/Scripts/python tests/test_all.py                    # expect all tests passing
 ```
 
 Requirements: Python 3.10+. Deps: `cryptography`, `requests`.
-All state (keys, chains) goes under `./data` (gitignored) or `$AGENTPROOF_HOME`.
+All state (keys, chains) goes under `./data` (gitignored) or `$VERIEFFECT_HOME`.
 
 ## Rules of the codebase
 
@@ -28,14 +28,14 @@ All state (keys, chains) goes under `./data` (gitignored) or `$AGENTPROOF_HOME`.
    UTF-8, NaN, wrong types: print INVALID/malformed and exit nonzero.
    `verify_receipt.py` additionally keeps **zero internal imports** — it is the
    publishable reference implementation (duplicated helpers are intentional;
-   keep them in sync with `agentproof/core.py`).
+   keep them in sync with `verieffect/core.py`).
 5. **Every fix ships with a regression test.** `tests/test_all.py` is a plain
    script (no pytest) — follow its `check(name, cond)` pattern.
 
 ## Adding a probe
 
 1. Write `probe_<name>(target, expect) -> (observed: dict, verdict: str)` in
-   `agentproof/probes.py`. Observed must record what was measured, not just
+   `verieffect/probes.py`. Observed must record what was measured, not just
    pass/fail. Honor the read-only-by-default rule.
 2. Register it in `PROBES`.
 3. Add tests covering: PASS path, FAIL path, UNVERIFIABLE path (target
@@ -56,7 +56,7 @@ BOTH schema validators (`core.schema_errors` and the copy in
 ## Bug reports
 
 Use GitHub Issues. Include: OS, Python version, CLI command, expected vs actual
-verdict, and (for chain issues) the output of `agentproof audit`. Never paste
+verdict, and (for chain issues) the output of `verieffect audit`. Never paste
 your private key or receipts containing secrets — stdout/stderr excerpts can
 contain sensitive data.
 

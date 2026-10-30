@@ -2,9 +2,9 @@
 
 ## Scope and posture
 
-AgentProof is a verification tool, so its own security posture matters. Read the
+Verieffect is a verification tool, so its own security posture matters. Read the
 [threat model](docs/receipt-schema.md#threat-model-what-receipts-do-and-dont-prove)
-first: AgentProof is a **drift detector, not an attestation system**. The signing
+first: Verieffect is a **drift detector, not an attestation system**. The signing
 key is co-located with the agents it audits (MVP design); an adversary with local
 code execution as the same OS user can forge receipts. This is documented, not
 discovered — reports restating it will be closed as by-design.
@@ -19,7 +19,7 @@ discovered — reports restating it will be closed as by-design.
 ## Reporting a vulnerability
 
 **Do not open a public issue for security bugs.** Use
-[GitHub Security Advisories](https://github.com/bfeng1122/agentproof/security/advisories/new)
+[GitHub Security Advisories](https://github.com/bfeng1122/verieffect/security/advisories/new)
 (private draft advisory) on this repository.
 
 Include: reproduction steps, affected probe/verifier, whether the issue allows

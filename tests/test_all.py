@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agentproof test suite — run with .venv/Scripts/python.exe tests/test_all.py"""
+"""verieffect test suite — run with .venv/Scripts/python.exe tests/test_all.py"""
 import json
 import os
 import subprocess
@@ -11,11 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agentproof.core import (  # noqa: E402
+from verieffect.core import (  # noqa: E402
     ChainStore, Keyring, canonical_json, sha256_hex,
     receipt_body, sign_receipt, verify_chain, verify_receipt, GENESIS_HASH,
 )
-from agentproof.probes import (  # noqa: E402
+from verieffect.probes import (  # noqa: E402
     probe_file_exists, probe_http_ok, probe_db_row_matches, probe_exit_code,
     PASS, FAIL, UNVERIFIABLE,
 )
@@ -25,7 +25,7 @@ from agentproof.probes import (  # noqa: E402
 _default_py = ROOT / ".venv" / "Scripts" / "python.exe"
 if not _default_py.exists():
     _default_py = ROOT / ".venv" / "bin" / "python"
-PY = os.environ.get("AGENTPROOF_TEST_PY") or (
+PY = os.environ.get("VERIEFFECT_TEST_PY") or (
     str(_default_py) if _default_py.exists() else sys.executable)
 results = []
 
@@ -232,7 +232,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("streaming substring search still works", v == PASS)
 
     # --- strict schema validation (signed-but-malformed detection) ---
-    from agentproof.core import schema_errors
+    from verieffect.core import schema_errors
     bad_signed = sign_receipt(
         {"v": 1, "claim_id": "not-a-uuid", "agent_id": "x", "kind": "file_exists",
          "target": "y", "expect": {}, "observed": {}, "verdict": "MAYBE",
@@ -247,9 +247,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check("real receipts pass strict schema", schema_errors(good_signed) == [])
 
     print("== CLI end-to-end ==")
-    env = dict(os.environ, AGENTPROOF_HOME=str(tmp / "cli_home"))
+    env = dict(os.environ, VERIEFFECT_HOME=str(tmp / "cli_home"))
     cp = subprocess.run(
-        [PY, "-m", "agentproof.cli", "claim", "file_exists",
+        [PY, "-m", "verieffect.cli", "claim", "file_exists",
          "--agent", "cli-agent", "--target", str(f),
          "--expect", json.dumps({"min_bytes": 1024}),
          "--out", str(tmp / "receipt.json")],
@@ -259,7 +259,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("receipt has sig + verdict PASS", rec.get("verdict") == "PASS" and "sig" in rec)
 
     cp2 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "claim", "file_exists",
+        [PY, "-m", "verieffect.cli", "claim", "file_exists",
          "--agent", "cli-agent", "--target", str(tmp / "ghost.txt"),
          "--expect", "{}"],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
@@ -267,14 +267,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
     cp3 = subprocess.run(
         [PY, str(ROOT / "verify_receipt.py"),
-         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         "--pubkey", str(tmp / "cli_home" / "keys" / "verieffect_ed25519.pub"),
          str(tmp / "receipt.json")],
         capture_output=True, text=True, cwd=str(ROOT))
     check("standalone offline verifier validates receipt",
           cp3.returncode == 0 and "VALID" in cp3.stdout)
 
     cp4 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent"],
+        [PY, "-m", "verieffect.cli", "audit", "--agent", "cli-agent"],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("CLI audit of 2-receipt chain clean", cp4.returncode == 0)
 
@@ -287,7 +287,7 @@ with tempfile.TemporaryDirectory() as tmp:
     lines = chain_files[0].read_text(encoding="utf-8").splitlines()
     chain_files[0].write_text("\n".join(lines[:1]) + "\n", encoding="utf-8")  # drop newest
     cp5 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+        [PY, "-m", "verieffect.cli", "audit", "--agent", "cli-agent",
          "--expect-count", "2", "--expect-head", head],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("tail truncation detected via anchored count+head",
@@ -299,7 +299,7 @@ with tempfile.TemporaryDirectory() as tmp:
     evil_chain.write_text(chain_files[0].read_text(encoding="utf-8"), encoding="utf-8")
     cp6 = subprocess.run(
         [PY, str(ROOT / "verify_receipt.py"), "--agent", "other-agent", "--chain",
-         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         "--pubkey", str(tmp / "cli_home" / "keys" / "verieffect_ed25519.pub"),
          str(evil_chain)],
         capture_output=True, text=True, cwd=str(ROOT))
     check("relabeled chain rejected (agent binding)",
@@ -308,7 +308,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # --- NaN rejected in --expect (m3) ---
     cp7 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "claim", "file_exists",
+        [PY, "-m", "verieffect.cli", "claim", "file_exists",
          "--agent", "cli-agent", "--target", str(f),
          "--expect", '{"min_bytes": NaN}'],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
@@ -342,7 +342,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # --- --expect-head tolerates stray whitespace (re-review #3) ---
     m2 = re.search(r"chain head: ([0-9a-f]{64})", cp4.stdout)
     cp8 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+        [PY, "-m", "verieffect.cli", "audit", "--agent", "cli-agent",
          "--expect-head", (m2.group(1) if m2 else "") + "  \n"],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("head with trailing whitespace still matches", cp8.returncode == 0)
@@ -351,21 +351,21 @@ with tempfile.TemporaryDirectory() as tmp:
     bad_receipt = tmp / "bad_receipt.json"
     bad_receipt.write_text("{not json", encoding="utf-8")
     cp9 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "verify", str(bad_receipt)],
+        [PY, "-m", "verieffect.cli", "verify", str(bad_receipt)],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("cli verify on malformed JSON: exit 2, no traceback",
           cp9.returncode == 2 and "Traceback" not in cp9.stderr)
 
     # --- checkpoint subcommand: anchor matches audit expectations ---
     cp10 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "checkpoint", "--agent", "cli-agent", "--json"],
+        [PY, "-m", "verieffect.cli", "checkpoint", "--agent", "cli-agent", "--json"],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     cpj = json.loads(cp10.stdout) if cp10.returncode == 0 else {}
     check("checkpoint --json prints agent/count/head",
           cp10.returncode == 0 and cpj.get("agent_id") == "cli-agent"
           and cpj.get("count") == 2 and len(cpj.get("head", "")) == 64)
     cp11 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+        [PY, "-m", "verieffect.cli", "audit", "--agent", "cli-agent",
          "--expect-count", str(cpj.get("count")), "--expect-head", cpj.get("head", "")],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("audit with checkpoint anchor passes (round-trip)", cp11.returncode == 0)
@@ -420,7 +420,7 @@ with tempfile.TemporaryDirectory() as tmp:
     forged_p = tmp / "forged.json"
     forged_p.write_text(json.dumps(forged), encoding="utf-8")
     cp12 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "verify", str(forged_p)],
+        [PY, "-m", "verieffect.cli", "verify", str(forged_p)],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("forged receipt: verdict labeled unverified_claim, not echoed as truth",
           cp12.returncode == 1 and "unverified_claim" in cp12.stdout)
@@ -429,10 +429,10 @@ with tempfile.TemporaryDirectory() as tmp:
     conc_home = tmp / "conc_home"
     conc_code = (
         "import sys; sys.path.insert(0, r'%s')\n"
-        "from agentproof.core import ChainStore, Keyring, receipt_body, sign_receipt\n"
+        "from verieffect.core import ChainStore, Keyring, receipt_body, sign_receipt\n"
         "from pathlib import Path\n"
         "import os\n"
-        "home = Path(os.environ['AGENTPROOF_HOME'])\n"
+        "home = Path(os.environ['VERIEFFECT_HOME'])\n"
         "store = ChainStore(home / 'chains'); kr = Keyring(home / 'keys')\n"
         "priv = kr.load_or_create()\n"
         "for i in range(10):\n"
@@ -440,13 +440,13 @@ with tempfile.TemporaryDirectory() as tmp:
         "        b = receipt_body(f'c{i}', 'conc', 'file_exists', 'x', {}, {'i': i}, 'PASS', store.last_hash('conc'))\n"
         "        store.append(sign_receipt(b, priv))\n" % str(ROOT)
     )
-    cenv = dict(os.environ, AGENTPROOF_HOME=str(conc_home))
+    cenv = dict(os.environ, VERIEFFECT_HOME=str(conc_home))
     procs = [subprocess.Popen([PY, "-c", conc_code], env=cenv,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
              for _ in range(2)]
     rcs = [p.wait() for p in procs]
     conc_store = ChainStore(conc_home / "chains")
-    conc_pub = (conc_home / "keys" / "agentproof_ed25519.pub").read_text(encoding="utf-8")
+    conc_pub = (conc_home / "keys" / "verieffect_ed25519.pub").read_text(encoding="utf-8")
     conc_problems = verify_chain(conc_store.read_all("conc"), conc_pub) if all(
         rc == 0 for rc in rcs) else ["worker crashed"]
     check("two concurrent writers: 20 receipts, no chain fork",
@@ -503,7 +503,7 @@ with tempfile.TemporaryDirectory() as tmp:
     utf8_chain.write_bytes(good_line + b"\n" + b'{"claim_id": "\xed\xa0\x80"}\n')
     cp13 = subprocess.run(
         [PY, str(ROOT / "verify_receipt.py"),
-         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         "--pubkey", str(tmp / "cli_home" / "keys" / "verieffect_ed25519.pub"),
          "--chain", str(utf8_chain)],
         capture_output=True, text=True, cwd=str(ROOT), encoding="utf-8", errors="replace")
     check("invalid-UTF8 chain: no traceback, malformed line reported",
@@ -512,7 +512,7 @@ with tempfile.TemporaryDirectory() as tmp:
     bom_chain.write_bytes(b"\xef\xbb\xbf" + json.dumps(rec).encode("utf-8") + b"\n")
     cp14 = subprocess.run(
         [PY, str(ROOT / "verify_receipt.py"),
-         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         "--pubkey", str(tmp / "cli_home" / "keys" / "verieffect_ed25519.pub"),
          "--chain", str(bom_chain)],
         capture_output=True, text=True, cwd=str(ROOT))
     check("BOM-prefixed chain: first receipt still verifies (utf-8-sig)",
@@ -520,13 +520,13 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # --- cli verify/audit on a missing --pubkey: clean exit 2, no traceback ---
     cp15 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "verify", str(tmp / "receipt.json"),
+        [PY, "-m", "verieffect.cli", "verify", str(tmp / "receipt.json"),
          "--pubkey", str(tmp / "no-such-key.pub")],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("cli verify missing pubkey: exit 2, no traceback",
           cp15.returncode == 2 and "Traceback" not in cp15.stderr)
     cp16 = subprocess.run(
-        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+        [PY, "-m", "verieffect.cli", "audit", "--agent", "cli-agent",
          "--pubkey", str(tmp / "no-such-key.pub")],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("cli audit missing pubkey: exit 2, no traceback",

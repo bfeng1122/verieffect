@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.0-alpha — 2026-10-31
+
+First tagged release, under the new name.
+
+### Renamed from AgentProof
+"AgentProof" collided with 5+ existing products, including `agent-proof.dev`
+(deterministic side-effect verification for agents — same thesis, same name).
+**Verieffect** was verified free on PyPI, GitHub and npm, with all domains
+available and no product or research collisions.
+
+Signing key and receipt format are unchanged, so receipts issued before the rename
+still verify. The repo keeps its full history; GitHub redirects the old URL.
+
 ## v0.1.0 — 2026-10-31
 
 First tagged release. MVP of the receipt protocol and tooling.
@@ -21,7 +34,7 @@ First tagged release. MVP of the receipt protocol and tooling.
   (SELECT-only + `query_only`), timestamp-regression and agent-binding
   checks in audits
 - CLI exit codes 0/1/2 for cron/CI branching; `pyproject.toml` packaging
-  with `agentproof` console script
+  with `verieffect` console script
 - 91-test suite; CI on ubuntu+windows × Python 3.10–3.12
 - Docs: honest threat model, receipt schema spec, examples for all probes,
   CONTRIBUTING, SECURITY policy
