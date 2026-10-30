@@ -66,6 +66,10 @@ Chain (audit):
   hard timeout (default 30 s), no stdin, and output caps. Timeout ⇒ `FAIL`
   (`observed.timed_out: true`). Stdout/stderr excerpts are stored in the signed
   receipt — never run commands that print secrets.
+- `exit_code` RE-RUNS the command at verify time; it does not observe the claimer's
+  original execution. A receipt therefore attests "this command exits N *now*," not
+  "the agent's run exited N." Use it only for idempotent checks; verify side-effecting
+  work via its effects (`file_exists`, `db_row_matches`) instead.
 
 ## Threat model (what receipts do and don't prove)
 

@@ -6,13 +6,21 @@ Deterministic verification for AI agent work, with signed, tamper-evident receip
 When an agent says "I uploaded the file" / "the trade filled" / "the backup ran" —
 AgentProof probes ground truth *itself* and issues a receipt anyone can verify offline.
 
+> **What the signature does and doesn't prove.** The signing key lives next to your
+> agents (same host, MVP). Receipts are therefore **tamper-evident against drift and
+> sloppy self-reports — not tamper-proof against an adversarial agent with local code
+> execution** (such an agent could read the key and forge receipts). AgentProof is a
+> *drift detector* for the well-documented "agent says done, side effect didn't
+> happen" failure mode. Hosted/separate-user verification is on the roadmap. Details:
+> [threat model](docs/receipt-schema.md#threat-model-what-receipts-do-and-dont-prove).
+
 - **No LLM in the verdict path.** Verdicts come from deterministic probes: filesystem
   state, HTTP responses, database rows, command exit codes. A model never *opines*
   that work succeeded; evidence shows it.
 - **Signed receipts.** Ed25519 signature + per-agent hash chain, so receipts can't be
   forged or silently edited after the fact. (Honest scope: the chain detects edits and
   mid-chain deletions; tail truncation needs an externally anchored head hash —
-  see the [threat model](docs/receipt-schema.md).)
+  see [Checkpointing](#checkpointing-anti-truncation) below.)
 - **Three verdicts, never two.** `PASS` / `FAIL` / `UNVERIFIABLE` — a network error is
   never laundered into a pass, and a missing file is never excused as "couldn't check."
 
@@ -86,7 +94,7 @@ and cron jobs can branch on verification results directly.
 | `file_exists` | path | file present; size bounds / sha256 / mtime freshness / text content |
 | `http_ok` | URL | endpoint answers; status / body substring / body hash (probe makes the request itself). GET/HEAD only unless you explicitly pass `"allow_unsafe_method": true` |
 | `db_row_matches` | `sqlite:///x.db`, `x.jsonl`, `x.json` | record state: SELECT-only queries (`PRAGMA query_only` enforced), JSONL row filters, dotted-path JSON fields |
-| `exit_code` | shell command | command re-run: exit code / stdout content. **Off by default** — runs with the verifier's full OS privileges, so it requires an explicit `"allow_shell": true` in `--expect` |
+| `exit_code` | shell command | command **re-run at verify time**: exit code / stdout content. **Off by default** (`"allow_shell": true` required); runs with the verifier's full OS privileges. Use only for idempotent/read-only commands — for side-effecting work, verify the *effect* (`file_exists`/`db_row_matches`) instead |
 
 ⚠️ **Trust boundary:** `http_ok` and `exit_code` act on the verifier's machine and
 network position. Only wire claims from agents **you** operate — a claimer who can
@@ -112,6 +120,30 @@ python verify_receipt.py --pubkey agentproof_ed25519.pub --chain chain.jsonl \
 implementation of the receipt format and never raises on malformed input.
 See [`docs/receipt-schema.md`](docs/receipt-schema.md) for the full spec.
 
+### Checkpointing (anti-truncation)
+
+A forward-walk audit can't see tail truncation unless the chain head was anchored
+somewhere the operator can't quietly rewrite. `checkpoint` prints the anchor:
+
+```bash
+python -m agentproof.cli checkpoint --agent my-agent --json
+# {"agent_id": "my-agent", "count": 42, "head": "0dabf352...", "as_of": "..."}
+```
+
+Wire it into anything append-only you already have: a nightly git commit of the
+output, an OpenTimestamps stamp, a message to a channel only you control. Later:
+
+```bash
+python -m agentproof.cli audit --agent my-agent --expect-count 42 --expect-head 0dabf352...
+```
+
+### Prefer body hashes over substrings
+
+For `http_ok`, `body_contains` is a smoke test — brittle on any dynamic page (dates,
+nonces, A/B variants). `body_sha256` is the strong check for static resources; use
+substring matching only for stable markers (e.g. `"status":"ok"` in an API health
+response).
+
 ## Design rules
 
 1. The probe is owned by the verifier, never the claimer. Self-reported results are
@@ -135,11 +167,12 @@ Full details in [receipt-schema.md](docs/receipt-schema.md).
 
 ## Status
 
-MVP. 58-test suite (`python tests/test_all.py` with the venv python), in daily
-production use verifying a 24/7 paper-trading agent stack (fills, portfolio state,
-backups) since Oct 2026 — 38+ receipts and a deliberate tamper test that breaks the
-chain as designed.
-Roadmap: externally anchored chain heads, hosted verifier API, connector library
-(Stripe/broker/Postgres), MCP server, key rotation (`kid` field).
+MVP. 68-test suite (`python tests/test_all.py` with the venv python; CI runs
+ubuntu+windows × Python 3.10–3.12), in daily production use verifying a 24/7
+paper-trading agent stack (fills, portfolio state, backups) since Oct 2026 — 38+
+receipts and a deliberate tamper test that breaks the chain as designed.
+Roadmap: externally anchored chain heads (checkpoint + OpenTimestamps), hosted
+verifier API, `kid` key rotation, `claimed_at`/`checked_at` split, connector library
+(Stripe/broker/Postgres), MCP server.
 
 MIT licensed.

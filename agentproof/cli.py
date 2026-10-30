@@ -122,6 +122,36 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_checkpoint(args: argparse.Namespace) -> int:
+    """Print the externally anchorable head for an agent's chain.
+
+    Intended workflow: cron commits/timestamps this output (git commit,
+    OpenTimestamps, a posted message). Auditors later compare with
+    audit --expect-head <anchored> / --expect-count <anchored> to detect
+    tail truncation and key-holder regeneration.
+    """
+    store = ChainStore(home() / "chains")
+    receipts = store.read_all(args.agent)
+    if not receipts:
+        print(f"no receipts for agent {args.agent}", file=sys.stderr)
+        return 2
+    from .core import canonical_json, sha256_hex
+    head = sha256_hex(canonical_json(receipts[-1]))
+    if args.json:
+        print(json.dumps({"agent_id": args.agent, "count": len(receipts),
+                          "head": head,
+                          "as_of": receipts[-1].get("checked_at")}))
+    else:
+        print(f"agent:  {args.agent}")
+        print(f"count:  {len(receipts)}")
+        print(f"head:   {head}")
+        print(f"as_of:  {receipts[-1].get('checked_at')}")
+        print("# anchor this: commit it, stamp it (OpenTimestamps), or post it.")
+        print("# audit later with: audit --agent " + args.agent +
+              f" --expect-count {len(receipts)} --expect-head {head}")
+    return 0
+
+
 def cmd_pubkey(_: argparse.Namespace) -> int:
     keyring = Keyring(home() / "keys")
     keyring.load_or_create()
@@ -157,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("pubkey", help="print the verifier public key")
     p.set_defaults(fn=cmd_pubkey)
+
+    k = sub.add_parser("checkpoint",
+                       help="print the chain head + count for external anchoring")
+    k.add_argument("--agent", required=True)
+    k.add_argument("--json", action="store_true", help="machine-readable output")
+    k.set_defaults(fn=cmd_checkpoint)
 
     args = ap.parse_args(argv)
     return args.fn(args)

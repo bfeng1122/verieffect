@@ -369,6 +369,14 @@ def probe_exit_code(target: str, expect: dict[str, Any] | None) -> tuple[dict, s
     Only wire claims from agents the operator controls — whoever can submit
     this claim can execute arbitrary commands on the verifier's machine.
     Bounds: hard timeout, output caps, no stdin.
+
+    SEMANTICS: the probe RE-RUNS the command at verify time — it does not
+    replay or observe the agent's original execution. Use it only for
+    idempotent/read-only commands ("git status --porcelain is empty",
+    "test -f /path"), never for commands with side effects (a backup run
+    twice, an email sent twice). For side-effecting work, verify the EFFECT
+    with file_exists/db_row_matches instead.
+
     Timeout -> FAIL (observed.timed_out). Cannot-spawn (missing binary, OS
     error) -> UNVERIFIABLE.
     WARNING: stdout/stderr excerpts land in signed, shareable receipts — do

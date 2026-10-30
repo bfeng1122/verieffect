@@ -19,7 +19,13 @@ from agentproof.probes import (  # noqa: E402
     PASS, FAIL, UNVERIFIABLE,
 )
 
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+# Interpreter for subprocess-based CLI tests: default to the local venv python
+# (Windows), overridable so CI can use the ambient interpreter on any OS.
+_default_py = ROOT / ".venv" / "Scripts" / "python.exe"
+if not _default_py.exists():
+    _default_py = ROOT / ".venv" / "bin" / "python"
+PY = os.environ.get("AGENTPROOF_TEST_PY") or (
+    str(_default_py) if _default_py.exists() else sys.executable)
 results = []
 
 
@@ -311,6 +317,20 @@ with tempfile.TemporaryDirectory() as tmp:
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("cli verify on malformed JSON: exit 2, no traceback",
           cp9.returncode == 2 and "Traceback" not in cp9.stderr)
+
+    # --- checkpoint subcommand: anchor matches audit expectations ---
+    cp10 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "checkpoint", "--agent", "cli-agent", "--json"],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    cpj = json.loads(cp10.stdout) if cp10.returncode == 0 else {}
+    check("checkpoint --json prints agent/count/head",
+          cp10.returncode == 0 and cpj.get("agent_id") == "cli-agent"
+          and cpj.get("count") == 2 and len(cpj.get("head", "")) == 64)
+    cp11 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+         "--expect-count", str(cpj.get("count")), "--expect-head", cpj.get("head", "")],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("audit with checkpoint anchor passes (round-trip)", cp11.returncode == 0)
 
 print()
 n_pass = sum(1 for _, ok in results if ok)
