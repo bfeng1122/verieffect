@@ -332,6 +332,88 @@ with tempfile.TemporaryDirectory() as tmp:
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("audit with checkpoint anchor passes (round-trip)", cp11.returncode == 0)
 
+    print("== deep-review regression tests ==")
+    # verify_receipt must not mutate the caller's dict AT ALL (copy-not-pop)
+    rec_copy = json.loads(json.dumps(rec))
+    verify_receipt(rec, pub_pem)
+    check("verify_receipt leaves caller dict untouched", rec == rec_copy)
+
+    # read_all: corrupt line -> structured RuntimeError naming the line
+    corrupt_store = ChainStore(tmp / "corrupt_chains")
+    corrupt_store.append(sign_receipt(
+        receipt_body("cX", "cx", "file_exists", "x", {}, {}, "PASS", GENESIS_HASH), priv))
+    cpath = corrupt_store._path("cx")
+    cpath.write_text(cpath.read_text(encoding="utf-8") + "{broken json\n",
+                     encoding="utf-8")
+    try:
+        corrupt_store.read_all("cx")
+        check("read_all corrupt line raises structured error", False)
+    except RuntimeError as e:
+        check("read_all corrupt line raises structured error",
+              "corrupt line 2" in str(e))
+
+    # timestamp regression detection (backdating guard)
+    ts_store = ChainStore(tmp / "ts_chains")
+    b_old = receipt_body("t1", "ts-agent", "file_exists", "x", {}, {}, "PASS", GENESIS_HASH)
+    b_old["checked_at"] = "2026-10-02T00:00:00Z"
+    r_old = sign_receipt(b_old, priv)
+    ts_store.append(r_old)
+    b_new = receipt_body("t2", "ts-agent", "file_exists", "x", {}, {}, "PASS",
+                         sha256_hex(canonical_json(r_old)))
+    b_new["checked_at"] = "2026-10-01T00:00:00Z"  # EARLIER than previous
+    ts_store.append(sign_receipt(b_new, priv))
+    ts_problems = verify_chain(ts_store.read_all("ts-agent"), pub_pem)
+    check("backdated receipt flagged as timestamp regression",
+          any("timestamp regression" in p for p in ts_problems))
+
+    # file_exists contains: match spanning a chunk boundary (streaming reader)
+    big = tmp / "big.bin"
+    needle = b"NEEDLE-ACROSS-BORDER"
+    big.write_bytes(b"A" * ((1 << 20) - 5) + needle + b"B" * 100)
+    obs_big, v_big = probe_file_exists(str(big), {"contains": needle.decode()})
+    check("contains match spanning 1MiB chunk boundary found", v_big == PASS)
+    obs_big2, v_big2 = probe_file_exists(str(big), {"contains": "NOT-PRESENT"})
+    check("contains negative still FAILs on big file", v_big2 == FAIL)
+
+    # cli verify on a FORGED receipt must label fields unverified, not echo PASS
+    forged = json.loads((tmp / "receipt.json").read_text(encoding="utf-8"))
+    forged["verdict"] = "PASS"
+    forged["sig"] = "ed25519:" + "ab" * 64
+    forged_p = tmp / "forged.json"
+    forged_p.write_text(json.dumps(forged), encoding="utf-8")
+    cp12 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "verify", str(forged_p)],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("forged receipt: verdict labeled unverified_claim, not echoed as truth",
+          cp12.returncode == 1 and "unverified_claim" in cp12.stdout)
+
+    # --- concurrent claims must not fork the chain (transaction lock) ---
+    conc_home = tmp / "conc_home"
+    conc_code = (
+        "import sys; sys.path.insert(0, r'%s')\n"
+        "from agentproof.core import ChainStore, Keyring, receipt_body, sign_receipt\n"
+        "from pathlib import Path\n"
+        "import os\n"
+        "home = Path(os.environ['AGENTPROOF_HOME'])\n"
+        "store = ChainStore(home / 'chains'); kr = Keyring(home / 'keys')\n"
+        "priv = kr.load_or_create()\n"
+        "for i in range(10):\n"
+        "    with store.transaction('conc'):\n"
+        "        b = receipt_body(f'c{i}', 'conc', 'file_exists', 'x', {}, {'i': i}, 'PASS', store.last_hash('conc'))\n"
+        "        store.append(sign_receipt(b, priv))\n" % str(ROOT)
+    )
+    cenv = dict(os.environ, AGENTPROOF_HOME=str(conc_home))
+    procs = [subprocess.Popen([PY, "-c", conc_code], env=cenv,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             for _ in range(2)]
+    rcs = [p.wait() for p in procs]
+    conc_store = ChainStore(conc_home / "chains")
+    conc_pub = (conc_home / "keys" / "agentproof_ed25519.pub").read_text(encoding="utf-8")
+    conc_problems = verify_chain(conc_store.read_all("conc"), conc_pub) if all(
+        rc == 0 for rc in rcs) else ["worker crashed"]
+    check("two concurrent writers: 20 receipts, no chain fork",
+          len(conc_store.read_all("conc")) == 20 and conc_problems == [])
+
 print()
 n_pass = sum(1 for _, ok in results if ok)
 print(f"RESULT: {n_pass}/{len(results)} passed")

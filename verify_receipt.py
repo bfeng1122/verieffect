@@ -103,6 +103,7 @@ def main() -> int:
     n = 0
     bad = 0
     last = None
+    prev_checked_at = None
     try:
         fh = open(args.file, encoding="utf-8")
     except OSError as e:
@@ -125,11 +126,20 @@ def main() -> int:
             chain_ok = isinstance(r, dict) and r.get("prev_receipt_hash") == prev
             agent_ok = (args.agent is None
                         or (isinstance(r, dict) and r.get("agent_id") == args.agent))
-            if not ok or not chain_ok or not agent_ok:
+            ts_ok = True
+            if isinstance(r, dict):
+                ts = r.get("checked_at")
+                if isinstance(ts, str):
+                    if prev_checked_at is not None and ts < prev_checked_at:
+                        ts_ok = False
+                    prev_checked_at = ts
+            if not ok or not chain_ok or not agent_ok or not ts_ok:
                 bad += 1
                 note = f"sig={why} chain_ok={chain_ok}"
                 if args.agent is not None:
                     note += f" agent_ok={agent_ok}"
+                if not ts_ok:
+                    note += " ts_regression=True"
                 cid = r.get("claim_id") if isinstance(r, dict) else "?"
                 print(f"  [{n}] {cid}: {note}")
             if isinstance(r, dict):

@@ -65,29 +65,38 @@ class Keyring:
             if not isinstance(key, Ed25519PrivateKey):
                 raise TypeError("existing key is not Ed25519")
             return key
-        key = Ed25519PrivateKey.generate()
+        # lock around generate+write so two concurrent first-claims can't each
+        # generate a key and overwrite the other's (TOCTOU)
         self.key_dir.mkdir(parents=True, exist_ok=True)
-        priv_pem = key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-        # Best-effort permission tightening. POSIX: chmod 0600 (real).
-        # Windows: os.chmod only toggles the read-only bit — it does NOT
-        # restrict other local users. For real isolation on Windows, run the
-        # verifier as a separate OS user or use an encrypted key (roadmap).
-        self.priv_path.write_bytes(priv_pem)
-        try:
-            os.chmod(self.priv_path, 0o600)
-        except OSError:
-            pass
-        self.pub_path.write_bytes(
-            key.public_key().public_bytes(
+        with _file_lock(self.priv_path):
+            if self.priv_path.exists():  # re-check under lock
+                key = serialization.load_pem_private_key(
+                    self.priv_path.read_bytes(), password=None)
+                if not isinstance(key, Ed25519PrivateKey):
+                    raise TypeError("existing key is not Ed25519")
+                return key
+            key = Ed25519PrivateKey.generate()
+            priv_pem = key.private_bytes(
                 encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
             )
-        )
-        return key
+            # Best-effort permission tightening. POSIX: chmod 0600 (real).
+            # Windows: os.chmod only toggles the read-only bit — it does NOT
+            # restrict other local users. For real isolation on Windows, run the
+            # verifier as a separate OS user or use an encrypted key (roadmap).
+            self.priv_path.write_bytes(priv_pem)
+            try:
+                os.chmod(self.priv_path, 0o600)
+            except OSError:
+                pass
+            self.pub_path.write_bytes(
+                key.public_key().public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            )
+            return key
 
     def public_key_pem(self) -> str:
         return self.pub_path.read_text(encoding="utf-8").strip()
@@ -150,22 +159,88 @@ class ChainStore:
                 f"last line of {p.name} is corrupt ({e}) — repair or remove it "
                 "before issuing new claims for this agent") from e
 
+    def transaction(self, agent_id: str):
+        """Context manager locking the read-modify-write cycle for one agent.
+
+        append() alone is atomic per line, but issuing a receipt requires
+        last_hash() THEN append() — without a transaction lock, two concurrent
+        claims read the same prev-hash and fork the chain. CLI claim wraps both
+        in this lock.
+        """
+        return _file_lock(self._path(agent_id))
+
     def append(self, receipt: dict) -> None:
         p = self._path(receipt["agent_id"])
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(receipt, sort_keys=True, ensure_ascii=False) + "\n")
+        line = json.dumps(receipt, sort_keys=True, ensure_ascii=False) + "\n"
+        with _file_lock(p):
+            with p.open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
 
     def read_all(self, agent_id: str) -> list[dict]:
+        """Parse every chain line. Corrupt lines raise a structured RuntimeError
+        naming the line number — never a raw JSONDecodeError traceback."""
         p = self._path(agent_id)
         if not p.exists():
             return []
         out = []
         with p.open("r", encoding="utf-8") as f:
-            for line in f:
+            for lineno, line in enumerate(f, 1):
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     out.append(json.loads(line))
+                except (json.JSONDecodeError, ValueError) as e:
+                    raise RuntimeError(
+                        f"corrupt line {lineno} of {p.name}: {e} — repair or "
+                        "remove it before auditing this agent") from e
         return out
+
+
+import contextlib
+import sys
+
+_held_locks: set = set()
+
+
+@contextlib.contextmanager
+def _file_lock(path: Path):
+    """Best-effort cross-process lock on <path>.lock.
+
+    POSIX: fcntl.flock. Windows: msvcrt.locking on the lock file. Reentrant
+    within the process (a held path is not re-locked — flock would self-block
+    on a second fd), and falls back to no-op where no primitive is available.
+    """
+    key = str(path)
+    if key in _held_locks:
+        yield
+        return
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    fh = open(lock_path, "a+")
+    _held_locks.add(key)
+    try:
+        if sys.platform != "win32":
+            fcntl = __import__("fcntl")
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        else:
+            try:
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+            except OSError:
+                pass  # lock busy/unavailable — proceed (best-effort)
+        yield
+    finally:
+        _held_locks.discard(key)
+        if sys.platform != "win32":
+            try:
+                fcntl = __import__("fcntl")
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        fh.close()
 
 
 # ---------------------------------------------------------------- receipts
@@ -205,25 +280,25 @@ def verify_receipt(receipt: dict, pub_pem: str | bytes) -> tuple[bool, str]:
         return False, "missing signature"
     if receipt.get("v") != SCHEMA_VERSION:
         return False, f"unsupported schema version {receipt.get('v')!r}"
-    sig_field = receipt.pop("sig")
+    sig_field = receipt.get("sig")
+    if not isinstance(sig_field, str) or not sig_field.startswith("ed25519:"):
+        return False, "unsupported signature scheme"
     try:
-        if not isinstance(sig_field, str) or not sig_field.startswith("ed25519:"):
-            return False, "unsupported signature scheme"
         sig = bytes.fromhex(sig_field[len("ed25519:"):])
     except ValueError:
         return False, "malformed signature encoding"
+    # work on a shallow copy — never mutate (even transiently) the caller's dict
+    body = {k: v for k, v in receipt.items() if k != "sig"}
     try:
         pub = serialization.load_pem_public_key(
             pub_pem.encode() if isinstance(pub_pem, str) else pub_pem)
         if not isinstance(pub, Ed25519PublicKey):
             return False, "public key is not Ed25519"
-        pub.verify(sig, canonical_json(receipt))
+        pub.verify(sig, canonical_json(body))
     except InvalidSignature:
         return False, "INVALID SIGNATURE"
     except Exception as e:  # noqa: BLE001
         return False, f"verification error: {e}"
-    finally:
-        receipt["sig"] = sig_field  # restore — never mutate caller's receipt
     return True, "signature valid"
 
 
@@ -240,6 +315,7 @@ def verify_chain(receipts: list[dict], pub_pem: str | bytes,
     """
     problems = []
     prev = GENESIS_HASH
+    prev_checked_at = None
     for i, r in enumerate(receipts):
         ok, why = verify_receipt(r, pub_pem)
         if not ok:
@@ -252,5 +328,14 @@ def verify_chain(receipts: list[dict], pub_pem: str | bytes,
             problems.append(
                 f"[{i}] {r.get('claim_id','?')}: chain break — expected prev "
                 f"{prev[:12]}…, got {str(r.get('prev_receipt_hash'))[:12]}…")
+        # timestamp monotonicity: catches sloppy backdating on regenerated
+        # chains (ISO8601 Z timestamps sort lexicographically)
+        ts = r.get("checked_at")
+        if isinstance(ts, str) and prev_checked_at is not None and ts < prev_checked_at:
+            problems.append(
+                f"[{i}] {r.get('claim_id','?')}: timestamp regression — "
+                f"{ts} < previous {prev_checked_at} (possible backdating)")
+        if isinstance(ts, str):
+            prev_checked_at = ts
         prev = sha256_hex(canonical_json(r))
     return problems

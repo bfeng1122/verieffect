@@ -40,12 +40,14 @@ Chain (audit):
 2. For each receipt in chain order: verify signature; assert
    `prev_receipt_hash == prev`; when an expected `agent_id` is supplied, assert
    every receipt's `agent_id` matches (chains are bound to one agent);
+   flag any `checked_at` that regresses vs the previous receipt (backdating
+   guard — catches *sloppy* regeneration, not a careful forger);
    then `prev = sha256(canonical(receipt))`.
-3. Any signature failure, agent mismatch, or chain break ⇒ tamper or gap
-   detected; report the index.
+3. Any signature failure, agent mismatch, timestamp regression, or chain break
+   ⇒ tamper or gap detected; report the index.
 4. A forward walk cannot see tail truncation or key-holder regeneration; compare
    the final `prev` (chain head) and receipt count against externally anchored
-   values to detect those.
+   values to detect those (`checkpoint` prints the anchor).
 
 ## Verdict semantics
 
@@ -61,6 +63,9 @@ Chain (audit):
   (Python's `True == 1` trap is explicitly guarded and regression-tested).
 - `http_ok` refuses methods other than GET/HEAD unless `allow_unsafe_method` is
   passed explicitly. `observed.final_url` records where redirects actually landed.
+  Redirects are followed by default; pass `"follow_redirects": false` to treat a
+  redirect as the final response, or `"final_url_matches_target": true` to FAIL
+  when the redirect chain ends anywhere other than the exact target URL.
 - `exit_code` is gated OFF by default (`allow_shell: true` required). It is NOT
   sandboxed: the command runs with the verifier's full OS privileges. Bounds are a
   hard timeout (default 30 s), no stdin, and output caps. Timeout ⇒ `FAIL`

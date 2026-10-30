@@ -51,23 +51,32 @@ def cmd_claim(args: argparse.Namespace) -> int:
     keyring = Keyring(home() / "keys")
     priv = keyring.load_or_create()
 
-    observed, verdict = PROBES[args.kind](args.target, expect)
-    body = receipt_body(
-        claim_id=str(uuid.uuid4()),
-        agent_id=args.agent,
-        kind=args.kind,
-        target=args.target,
-        expect=expect,
-        observed=observed,
-        verdict=verdict,
-        prev_hash=store.last_hash(args.agent),
-    )
-    receipt = sign_receipt(body, priv)
-    store.append(receipt)
+    # lock the whole read-last-hash → append cycle: concurrent claims must
+    # serialize or they fork the chain (both would read the same prev hash)
+    with store.transaction(args.agent):
+        observed, verdict = PROBES[args.kind](args.target, expect)
+        body = receipt_body(
+            claim_id=str(uuid.uuid4()),
+            agent_id=args.agent,
+            kind=args.kind,
+            target=args.target,
+            expect=expect,
+            observed=observed,
+            verdict=verdict,
+            prev_hash=store.last_hash(args.agent),
+        )
+        receipt = sign_receipt(body, priv)
+        store.append(receipt)
 
     out = json.dumps(receipt, indent=2, ensure_ascii=False)
     if args.out:
-        Path(args.out).write_text(out + "\n", encoding="utf-8")
+        try:
+            Path(args.out).write_text(out + "\n", encoding="utf-8")
+        except OSError as e:
+            # receipt is already chained — make the export failure loud so the
+            # operator knows the chain entry exists but the file doesn't
+            print(f"WARNING: receipt appended to chain but --out write failed: "
+                  f"{e}", file=sys.stderr)
     print(out)
     # exit code: 0 PASS, 1 FAIL/UNVERIFIABLE — scripts can branch on it
     return 0 if verdict == "PASS" else 1
@@ -81,15 +90,27 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 2
     pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
     ok, why = verify_receipt(receipt, pub)
-    print(json.dumps({"signature_ok": ok, "detail": why,
-                      "verdict": receipt.get("verdict"),
-                      "claim_id": receipt.get("claim_id")}, indent=2))
+    if ok:
+        out = {"signature_ok": True, "detail": why,
+               "verdict": receipt.get("verdict"),
+               "claim_id": receipt.get("claim_id")}
+    else:
+        # signature failed — the receipt's own fields are UNTRUSTED claims;
+        # label them as such rather than echoing a possibly forged "PASS"
+        out = {"signature_ok": False, "detail": why,
+               "unverified_claim": {"verdict": receipt.get("verdict"),
+                                    "claim_id": receipt.get("claim_id")}}
+    print(json.dumps(out, indent=2))
     return 0 if ok else 1
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
     store = ChainStore(home() / "chains")
-    receipts = store.read_all(args.agent)
+    try:
+        receipts = store.read_all(args.agent)
+    except RuntimeError as e:
+        print(f"AUDIT ABORTED: {e}", file=sys.stderr)
+        return 2
     if not receipts:
         print(f"no receipts for agent {args.agent}")
         return 2
@@ -131,7 +152,11 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     tail truncation and key-holder regeneration.
     """
     store = ChainStore(home() / "chains")
-    receipts = store.read_all(args.agent)
+    try:
+        receipts = store.read_all(args.agent)
+    except RuntimeError as e:
+        print(f"CHECKPOINT ABORTED: {e}", file=sys.stderr)
+        return 2
     if not receipts:
         print(f"no receipts for agent {args.agent}", file=sys.stderr)
         return 2
@@ -166,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("claim", help="run a probe and emit a signed receipt")
     c.add_argument("kind", choices=sorted(PROBES))
     c.add_argument("--agent", required=True)
-    c.add_argument("--target", required=True)
+    c.add_argument("--target", required=True,
+                   help="for exit_code: the command is RE-RUN at verify time — "
+                        "use idempotent commands only (see docs/receipt-schema.md)")
     c.add_argument("--expect", default=None, help="JSON object of expectations")
     c.add_argument("--out", default=None, help="also write receipt to this file")
     c.set_defaults(fn=cmd_claim)

@@ -167,12 +167,11 @@ Full details in [receipt-schema.md](docs/receipt-schema.md).
 
 ## Status
 
-MVP. 68-test suite (`python tests/test_all.py` with the venv python; CI runs
+MVP. 75-test suite (`python tests/test_all.py` with the venv python; CI runs
 ubuntu+windows × Python 3.10–3.12), in daily production use verifying a 24/7
 paper-trading agent stack (fills, portfolio state, backups) since Oct 2026 — 38+
 receipts and a deliberate tamper test that breaks the chain as designed.
-Roadmap: externally anchored chain heads (checkpoint + OpenTimestamps), hosted
-verifier API, `kid` key rotation, `claimed_at`/`checked_at` split, connector library
-(Stripe/broker/Postgres), MCP server.
+Roadmap: hosted verifier API, `kid` key rotation, `claimed_at`/`checked_at` split,
+connector library (Stripe/broker/Postgres), MCP server.
 
 MIT licensed.

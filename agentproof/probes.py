@@ -95,8 +95,22 @@ def probe_file_exists(target: str, expect: dict[str, Any] | None) -> tuple[dict,
             return observed, UNVERIFIABLE
     if "contains" in expect:
         try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-            found = expect["contains"] in text
+            # stream in chunks — never load a multi-GB file into memory
+            needle = expect["contains"]
+            found = False
+            enc_needle = needle.encode("utf-8") if isinstance(needle, str) else needle
+            with p.open("rb") as fh:
+                tail = b""
+                while True:
+                    chunk = fh.read(1 << 20)
+                    if not chunk:
+                        break
+                    window = tail + chunk
+                    if enc_needle in window:
+                        found = True
+                        break
+                    # keep overlap so matches spanning chunk borders are seen
+                    tail = window[-max(len(enc_needle), 1):]
             observed["contains_found"] = found
             if not found:
                 verdict = FAIL
@@ -130,9 +144,14 @@ def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str
         return {"error": f"method {method} refused — pass allow_unsafe_method "
                          "to permit non-read-only requests"}, FAIL
     timeout = expect.get("timeout_s", 15)
+    # redirect policy: followed by default, but strict claims can pin the
+    # destination — "final_url_matches_target" fails if a redirect chain ends
+    # anywhere other than the exact target URL
+    allow_redirects = expect.get("follow_redirects", True)
     observed: dict[str, Any] = {"url": target, "method": method}
     try:
-        resp = requests.request(method, target, timeout=timeout)
+        resp = requests.request(method, target, timeout=timeout,
+                                allow_redirects=allow_redirects)
     except Exception as e:  # noqa: BLE001 — network errors are UNVERIFIABLE
         observed["error"] = f"{type(e).__name__}: {e}"
         return observed, UNVERIFIABLE
@@ -148,6 +167,9 @@ def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str
     verdict = PASS
     want_status = expect.get("status", 200)
     if resp.status_code != want_status:
+        verdict = FAIL
+    if expect.get("final_url_matches_target") and resp.url.rstrip("/") != target.rstrip("/"):
+        observed["final_url_mismatch"] = True
         verdict = FAIL
     if "body_contains" in expect:
         try:
