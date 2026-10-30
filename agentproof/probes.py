@@ -275,13 +275,19 @@ def probe_db_row_matches(target: str, expect: dict[str, Any] | None) -> tuple[di
             quoted = urllib.parse.quote(p.as_posix(), safe="/:")
             con = sqlite3.connect(f"file:{quoted}?mode=ro", uri=True,
                                   timeout=expect.get("timeout_s", 10))
-            con.execute("PRAGMA query_only = ON")  # second layer of read-only
-            cur = con.execute(query)
-            rows = cur.fetchall()
-            con.close()
         except sqlite3.Error as e:
             observed["error"] = f"{type(e).__name__}: {e}"
             return observed, UNVERIFIABLE
+        try:
+            con.execute("PRAGMA query_only = ON")  # second layer of read-only
+            cur = con.execute(query)
+            rows = cur.fetchall()
+        except sqlite3.Error as e:
+            observed["error"] = f"{type(e).__name__}: {e}"
+            return observed, UNVERIFIABLE
+        finally:
+            con.close()  # MUST close on every path — on Windows an open handle
+                         # locks the file and breaks temp-dir cleanup
         observed["row_count"] = len(rows)
         observed["rows"] = [list(r) for r in rows[:50]]
         verdict = PASS
