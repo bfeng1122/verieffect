@@ -35,9 +35,13 @@ GENESIS_HASH = "0" * 64
 # ---------------------------------------------------------------- canonical json
 
 def canonical_json(obj: Any) -> bytes:
-    """Stable serialization: sorted keys, compact separators, UTF-8."""
+    """Stable serialization: sorted keys, compact separators, UTF-8.
+
+    Rejects non-finite floats (NaN/Infinity) — they are invalid JSON per
+    RFC 8259 and would poison cross-language verification.
+    """
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False).encode("utf-8")
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def sha256_hex(data: bytes) -> str:
@@ -68,7 +72,10 @@ class Keyring:
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        # best-effort 0600 (Windows ACLs are coarser; POSIX honored directly)
+        # Best-effort permission tightening. POSIX: chmod 0600 (real).
+        # Windows: os.chmod only toggles the read-only bit — it does NOT
+        # restrict other local users. For real isolation on Windows, run the
+        # verifier as a separate OS user or use an encrypted key (roadmap).
         self.priv_path.write_bytes(priv_pem)
         try:
             os.chmod(self.priv_path, 0o600)
@@ -102,7 +109,16 @@ class ChainStore:
 
     def _path(self, agent_id: str) -> Path:
         safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in agent_id)
-        return self.data_dir / f"chain_{safe}.jsonl"
+        # suffix a short hash of the RAW id so ids that sanitize identically
+        # ("a b" vs "a_b") never share a chain file
+        tag = sha256_hex(agent_id.encode("utf-8"))[:8]
+        new = self.data_dir / f"chain_{safe}_{tag}.jsonl"
+        if not new.exists():
+            # legacy pre-hash filenames keep resolving (read/append compatibility)
+            legacy = self.data_dir / f"chain_{safe}.jsonl"
+            if legacy.exists():
+                return legacy
+        return new
 
     def last_hash(self, agent_id: str) -> str:
         p = self._path(agent_id)
@@ -116,7 +132,12 @@ class ChainStore:
                     last = line
         if last is None:
             return GENESIS_HASH
-        return sha256_hex(canonical_json(json.loads(last)))
+        try:
+            return sha256_hex(canonical_json(json.loads(last)))
+        except (json.JSONDecodeError, ValueError) as e:
+            raise RuntimeError(
+                f"last line of {p.name} is corrupt ({e}) — repair or remove it "
+                "before issuing new claims for this agent") from e
 
     def append(self, receipt: dict) -> None:
         p = self._path(receipt["agent_id"])
@@ -171,9 +192,11 @@ def verify_receipt(receipt: dict, pub_pem: str | bytes) -> tuple[bool, str]:
     """
     if not isinstance(receipt, dict) or "sig" not in receipt:
         return False, "missing signature"
-    sig_field = receipt.pop("sig") if isinstance(receipt, dict) else None
+    if receipt.get("v") != SCHEMA_VERSION:
+        return False, f"unsupported schema version {receipt.get('v')!r}"
+    sig_field = receipt.pop("sig")
     try:
-        if not sig_field.startswith("ed25519:"):
+        if not isinstance(sig_field, str) or not sig_field.startswith("ed25519:"):
             return False, "unsupported signature scheme"
         sig = bytes.fromhex(sig_field[len("ed25519:"):])
     except ValueError:
@@ -193,14 +216,27 @@ def verify_receipt(receipt: dict, pub_pem: str | bytes) -> tuple[bool, str]:
     return True, "signature valid"
 
 
-def verify_chain(receipts: list[dict], pub_pem: str | bytes) -> list[str]:
-    """Full audit: every signature valid AND hash chain unbroken from genesis."""
+def verify_chain(receipts: list[dict], pub_pem: str | bytes,
+                 expected_agent_id: str | None = None) -> list[str]:
+    """Full audit: every signature valid, hash chain unbroken from genesis,
+    and (when expected_agent_id is given) every receipt belongs to that agent.
+
+    NOTE: verify_chain walks FORWARD from genesis, so it detects edits and
+    mid-chain deletions but NOT tail truncation (removing the newest receipts)
+    or wholesale regeneration by the key holder. To detect those, anchor the
+    chain head externally (e.g. publish sha256 of the last receipt + count) and
+    compare on audit. See docs/receipt-schema.md, Threat Model.
+    """
     problems = []
     prev = GENESIS_HASH
     for i, r in enumerate(receipts):
         ok, why = verify_receipt(r, pub_pem)
         if not ok:
             problems.append(f"[{i}] {r.get('claim_id','?')}: {why}")
+        if expected_agent_id is not None and r.get("agent_id") != expected_agent_id:
+            problems.append(
+                f"[{i}] {r.get('claim_id','?')}: agent mismatch — chain is for "
+                f"{expected_agent_id!r}, receipt claims {r.get('agent_id')!r}")
         if r.get("prev_receipt_hash") != prev:
             problems.append(
                 f"[{i}] {r.get('claim_id','?')}: chain break — expected prev "

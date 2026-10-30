@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "claim_id": "994384ab-e033-41d1-855f-8097dc4c6dc7",
+  "agent_id": "my-agent",
+  "kind": "file_exists",
+  "target": "./README.md",
+  "expect": {
+    "min_bytes": 1024
+  },
+  "observed": {
+    "path": "README.md",
+    "exists": true,
+    "size": 6997,
+    "mtime": 1793383616
+  },
+  "verdict": "PASS",
+  "checked_at": "2026-10-30T18:20:56Z",
+  "prev_receipt_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sig": "ed25519:9ee1dc9567829fde3fd58d26baee257e476ad92c77f9644f7bc384a27087260248911b72c3f742cb6d3e96f392bf28e213e0c9cb4c7eaccf4e1c568c1277830a"
+}

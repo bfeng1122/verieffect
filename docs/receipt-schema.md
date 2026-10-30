@@ -38,8 +38,14 @@ Single receipt:
 Chain (audit):
 1. Start with `prev = "0"*64`.
 2. For each receipt in chain order: verify signature; assert
-   `prev_receipt_hash == prev`; then `prev = sha256(canonical(receipt))`.
-3. Any signature failure or chain break ⇒ tamper or gap detected; report the index.
+   `prev_receipt_hash == prev`; when an expected `agent_id` is supplied, assert
+   every receipt's `agent_id` matches (chains are bound to one agent);
+   then `prev = sha256(canonical(receipt))`.
+3. Any signature failure, agent mismatch, or chain break ⇒ tamper or gap
+   detected; report the index.
+4. A forward walk cannot see tail truncation or key-holder regeneration; compare
+   the final `prev` (chain head) and receipt count against externally anchored
+   values to detect those.
 
 ## Verdict semantics
 
@@ -47,21 +53,49 @@ Chain (audit):
   dependencies (e.g. `requests`) and network/spawn errors yield `UNVERIFIABLE`.
 - A missing target file is `FAIL` for `file_exists`/`db_row_matches` (the claimed
   record does not exist), not `UNVERIFIABLE`.
-- `db_row_matches` accepts read-only queries only (`SELECT`/`WITH` for sqlite);
-  anything else is rejected before execution.
-- `exit_code` runs the command with a hard timeout (default 30 s), no stdin, and
-  output caps. Timeout ⇒ `FAIL` (`observed.timed_out: true`).
+- `db_row_matches` accepts read-only queries only (`SELECT`/`WITH` for sqlite, with
+  `PRAGMA query_only` as a second enforcement layer); anything else is rejected
+  before execution.
+- `http_ok` refuses methods other than GET/HEAD unless `allow_unsafe_method` is
+  passed explicitly. `observed.final_url` records where redirects actually landed.
+- `exit_code` is gated OFF by default (`allow_shell: true` required). It is NOT
+  sandboxed: the command runs with the verifier's full OS privileges. Bounds are a
+  hard timeout (default 30 s), no stdin, and output caps. Timeout ⇒ `FAIL`
+  (`observed.timed_out: true`). Stdout/stderr excerpts are stored in the signed
+  receipt — never run commands that print secrets.
 
 ## Threat model (what receipts do and don't prove)
 
 Proves: a check with these expectations ran at this time against this target, the
-observed values were as recorded, and the receipt was not altered or reordered
-afterwards (given the verifier's key is trusted and its chain is complete).
+observed values were as recorded, and the receipt was not edited — and (when the
+chain is audited with `--agent`) belongs to the claimed agent.
 
-Does NOT prove: the claimer's *interpretation* was correct, that nothing else
-happened between probe and read, or anything about systems outside the probe's
-reach. The verifier's signing key is the root of trust — protect it (file is stored
-0600; it never leaves the machine).
+**Does NOT prove, and known limits:**
+
+1. **Interpretation.** The claimer chooses `target` and `expect`. A receipt proves
+   *this* check ran, not that it was the *right* check. Mitigation: claims-as-code —
+   expectations should come from the pipeline spec, not from the agent under audit.
+2. **Tail truncation.** Verification walks forward from genesis, so editing or
+   mid-chain deletion is detected — but removing the *newest* receipts is invisible
+   to a forward walk. Mitigation: anchor the chain head externally (publish
+   `sha256(last receipt)` + count — a daily git commit, an OpenTimestamps stamp, a
+   posted checkpoint) and audit with `--expect-head` / `--expect-count`.
+3. **Key-holder regeneration.** Whoever holds the private key can rebuild an
+   entire chain that verifies. External anchoring (limit 2) is also the mitigation:
+   once a head hash is published, a regenerated chain won't match it.
+4. **Key co-location.** The signing key lives on the operator's machine. On POSIX it
+   is chmod 0600; on Windows `os.chmod` only toggles the read-only bit — an attacker
+   with code execution as the same OS user can read the key and forge receipts.
+   AgentProof's threat model is the **non-adversarial** failure mode (the agent
+   bullshitting about whether side effects landed), not an actively hostile agent
+   on the same host. For that, run the verifier as a separate OS user or host.
+5. **Clock trust.** `checked_at` and file mtimes are host-clock values; NTP sanity
+   is the operator's job.
+6. **No key rotation in v1.** A leaked key compromises all historical receipts.
+   Convention for now: new key = new chain genesis, retain the old pubkey for old
+   receipts. A `kid` field is additive within v1 and on the roadmap.
+7. **Network position.** `http_ok` fetches from the verifier's network — treat it
+   as an SSRF/content-oracle surface; only wire claims from trusted claimers.
 
 ## Versioning
 

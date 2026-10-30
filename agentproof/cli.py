@@ -12,7 +12,7 @@ Usage:
 
 Data/key layout (default under ./data, override with AGENTPROOF_HOME):
   data/keys/agentproof_ed25519.{pem,pub}
-  data/chains/chain_<agent>.jsonl
+  data/chains/chain_<agent>_<hash8>.jsonl   (legacy chain_<agent>.jsonl still read)
 """
 from __future__ import annotations
 
@@ -40,9 +40,11 @@ def cmd_claim(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 2
     try:
-        expect = json.loads(args.expect) if args.expect else {}
-    except json.JSONDecodeError as e:
-        print(f"--expect must be valid JSON: {e}", file=sys.stderr)
+        def _no_nan(x):
+            raise ValueError(f"non-finite JSON constant not allowed: {x}")
+        expect = json.loads(args.expect, parse_constant=_no_nan) if args.expect else {}
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"--expect must be valid JSON (no NaN/Infinity): {e}", file=sys.stderr)
         return 2
 
     store = ChainStore(home() / "chains")
@@ -88,14 +90,31 @@ def cmd_audit(args: argparse.Namespace) -> int:
         print(f"no receipts for agent {args.agent}")
         return 2
     pub = Path(args.pubkey or (home() / "keys" / "agentproof_ed25519.pub")).read_text()
-    problems = verify_chain(receipts, pub)
+    problems = verify_chain(receipts, pub, expected_agent_id=args.agent)
+    from .core import canonical_json, sha256_hex
+    head_hash = sha256_hex(canonical_json(receipts[-1]))
     print(f"audited {len(receipts)} receipts for agent '{args.agent}'")
+    # truncation detection: compare against an externally anchored head/count
+    if args.expect_count is not None and len(receipts) != args.expect_count:
+        problems.append(
+            f"count mismatch — expected {args.expect_count} receipts, found "
+            f"{len(receipts)} (possible tail truncation)")
+    if args.expect_head and head_hash != args.expect_head.lower():
+        problems.append(
+            f"head mismatch — expected {args.expect_head[:16]}…, got "
+            f"{head_hash[:16]}… (possible tail truncation or regeneration)")
+    print(f"chain head: {head_hash}")
+    print(f"last receipt: {receipts[-1].get('claim_id')} @ {receipts[-1].get('checked_at')}")
     if problems:
         print("CHAIN BROKEN / SIGNATURES INVALID:")
         for p in problems:
             print(" ", p)
         return 1
     print("chain intact, all signatures valid ✓")
+    if args.expect_count is None and not args.expect_head:
+        print("note: intact ⇒ no edits/mid-chain deletions detected. Tail "
+              "truncation is only detectable via --expect-count/--expect-head "
+              "(anchor the head externally).")
     return 0
 
 
@@ -126,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     a = sub.add_parser("audit", help="verify a full agent chain")
     a.add_argument("--agent", required=True)
     a.add_argument("--pubkey", default=None)
+    a.add_argument("--expect-count", type=int, default=None,
+                   help="expected receipt count (externally anchored) — detects tail truncation")
+    a.add_argument("--expect-head", default=None,
+                   help="expected sha256 of the last receipt — detects truncation/regeneration")
     a.set_defaults(fn=cmd_audit)
 
     p = sub.add_parser("pubkey", help="print the verifier public key")

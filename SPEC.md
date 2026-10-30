@@ -22,7 +22,8 @@ verdict is independent of the agent that benefits from it.
 1. `file_exists` — path present, size/mtime/hash within expected bounds.
 2. `http_ok` — URL returns expected status + body substring/content-hash.
 3. `db_row_matches` — SELECT via read-only DSN; compare cells to claim.
-4. `exit_code` — re-run a stated command in a sandbox; compare exit/stdout-hash.
+4. `exit_code` — re-run a stated command; compare exit/stdout-hash. NOT sandboxed
+   (runs with verifier privileges); gated behind explicit `allow_shell: true`.
 5. `process_state` — named process/service running on host (via agent).
 
 ## Receipt format (the moat seed)
@@ -30,7 +31,10 @@ verdict is independent of the agent that benefits from it.
 {
   "v": 1,
   "claim_id": "uuid",
-  "agent_id": "did:agentproof:<name>",          // registered key per agent
+  "agent_id": "did:agentproof:<name>",          // MVP: free-text operator-chosen
+                                                // id; did:/registered per-agent
+                                                // keys are roadmap (single
+                                                // verifier key in v1)
   "kind": "http_ok",
   "target": "https://api.example.com/v1/orders/42",
   "expect": {"status": 200, "body_sha256": "..."},
@@ -87,6 +91,9 @@ E:/backups/projects/... with today's date + size > 0" → receipt. Ends the
    26%-class failure in our own agent stack").
 
 ## Success test (falsifiable, 4 weeks)
+
+An internal go/no-go bar for further investment — deliberately low; not a claim
+about market demand.
 - Dogfood: every trading fill + every backup has a receipt; EOD report cites them.
 - Publish schema + verifier; get ≥5 GitHub stars / 1 outside user (a Hermes or
   OpenClaw operator) verifying receipts they didn't create.

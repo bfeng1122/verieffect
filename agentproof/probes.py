@@ -111,9 +111,13 @@ def probe_file_exists(target: str, expect: dict[str, Any] | None) -> tuple[dict,
 def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str]:
     """target: URL. expect keys (all optional):
     status (int, default 200), body_contains (str), body_sha256 (str),
-    method (GET default), timeout_s (default 15).
+    method (GET or HEAD only by default — probes must not mutate; pass
+    "allow_unsafe_method": true to permit others), timeout_s (default 15).
     Probe performs the request ITSELF — the claimer's reported response is
     never trusted.
+    NOTE: target is fetched from the verifier's network position. Do not wire
+    claims from untrusted claimers — this is an SSRF/content-oracle surface
+    (see docs/receipt-schema.md, Threat Model).
     """
     expect = expect or {}
     try:
@@ -122,6 +126,9 @@ def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str
         return {"error": "requests not installed"}, UNVERIFIABLE
 
     method = expect.get("method", "GET").upper()
+    if method not in ("GET", "HEAD") and not expect.get("allow_unsafe_method"):
+        return {"error": f"method {method} refused — pass allow_unsafe_method "
+                         "to permit non-read-only requests"}, FAIL
     timeout = expect.get("timeout_s", 15)
     observed: dict[str, Any] = {"url": target, "method": method}
     try:
@@ -133,6 +140,7 @@ def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str
     body = resp.content
     observed.update({
         "status": resp.status_code,
+        "final_url": resp.url,
         "body_bytes": len(body),
         "body_sha256": hashlib.sha256(body).hexdigest(),
     })
@@ -233,8 +241,11 @@ def probe_db_row_matches(target: str, expect: dict[str, Any] | None) -> tuple[di
             observed["error"] = "refused: query must be SELECT/WITH (read-only by construction)"
             return observed, UNVERIFIABLE
         try:
-            con = sqlite3.connect(f"file:{p.as_posix()}?mode=ro", uri=True,
+            import urllib.parse
+            quoted = urllib.parse.quote(p.as_posix(), safe="/:")
+            con = sqlite3.connect(f"file:{quoted}?mode=ro", uri=True,
                                   timeout=expect.get("timeout_s", 10))
+            con.execute("PRAGMA query_only = ON")  # second layer of read-only
             cur = con.execute(query)
             rows = cur.fetchall()
             con.close()
@@ -349,15 +360,24 @@ def probe_exit_code(target: str, expect: dict[str, Any] | None) -> tuple[dict, s
       exit_code (int, default 0), stdout_contains (str), stdout_sha256 (str),
       timeout_s (default 30), workdir (cwd for the run).
 
-    MVP sandbox = hard timeout + output caps + no stdin + isolated run. The
-    command still executes with agentproof's OS privileges — only run claims
-    from agents the operator controls (SPEC: operator-supplied trust boundary).
+    SECURITY: this probe is NOT sandboxed. The command executes with
+    agentproof's full OS privileges. It is gated OFF by default: pass
+    "allow_shell": true in --expect (operator-controlled) to run it at all.
+    Only wire claims from agents the operator controls — whoever can submit
+    this claim can execute arbitrary commands on the verifier's machine.
+    Bounds: hard timeout, output caps, no stdin.
     Timeout -> FAIL (observed.timed_out). Cannot-spawn (missing binary, OS
     error) -> UNVERIFIABLE.
+    WARNING: stdout/stderr excerpts land in signed, shareable receipts — do
+    not run commands that print secrets.
     """
     import subprocess
 
     expect = expect or {}
+    if not expect.get("allow_shell"):
+        return {"error": "exit_code probe refused — it executes arbitrary "
+                         "commands with the verifier's privileges; pass "
+                         '"allow_shell": true to opt in (see probe docstring)'}, FAIL
     timeout = expect.get("timeout_s", 30)
     workdir = expect.get("workdir") or None
     observed: dict[str, Any] = {"command": target, "timeout_s": timeout}

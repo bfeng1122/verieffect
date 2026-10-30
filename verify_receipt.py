@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Standalone offline verifier — no agentproof install needed.
+"""Standalone offline verifier — needs only `cryptography`, no agentproof install.
 
 This file is what we publish with the receipt JSON schema: anyone (operator,
 auditor, a different machine) can validate a receipt or a whole chain file
-using only `cryptography`. Deliberately zero internal imports.
+using only `cryptography`. Deliberately zero internal imports. It prints
+INVALID/malformed rather than ever raising on untrusted input.
 
 Usage:
   python verify_receipt.py --pubkey agentproof_ed25519.pub receipt.json
   python verify_receipt.py --pubkey agentproof_ed25519.pub --chain chain_myagent.jsonl
+      [--agent myagent] [--expect-count N] [--expect-head HASH]
+
+Chain mode walks FORWARD from genesis, so it detects edited receipts and
+mid-chain deletions. It CANNOT detect tail truncation or regeneration by the
+key holder — pass --expect-count / --expect-head (an externally anchored head
+hash + count) to catch those. See docs/receipt-schema.md.
 """
 from __future__ import annotations
 
@@ -22,22 +29,41 @@ from cryptography.hazmat.primitives import serialization
 
 def canonical_json(obj) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False).encode("utf-8")
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def sha256_hex(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def verify_one(receipt: dict, pub) -> tuple[bool, str]:
+SCHEMA_VERSION = 1
+GENESIS = "0" * 64
+
+
+def verify_one(receipt, pub) -> tuple[bool, str]:
+    """Never raises — returns (ok, reason) even on hostile/malformed input."""
+    if not isinstance(receipt, dict):
+        return False, "not a JSON object"
+    if receipt.get("v") != SCHEMA_VERSION:
+        return False, f"unsupported schema version {receipt.get('v')!r}"
     sig_field = receipt.get("sig")
-    if not sig_field or not str(sig_field).startswith("ed25519:"):
+    if not isinstance(sig_field, str) or not sig_field.startswith("ed25519:"):
         return False, "missing/unsupported signature"
     body = {k: v for k, v in receipt.items() if k != "sig"}
     try:
-        pub.verify(bytes.fromhex(sig_field[len("ed25519:"):]), canonical_json(body))
+        sig = bytes.fromhex(sig_field[len("ed25519:"):])
+    except ValueError:
+        return False, "malformed signature encoding"
+    try:
+        canon = canonical_json(body)
+    except (ValueError, TypeError) as e:
+        return False, f"non-canonicalizable body: {e}"
+    try:
+        pub.verify(sig, canon)
     except InvalidSignature:
         return False, "INVALID SIGNATURE"
+    except Exception as e:  # noqa: BLE001 — any crypto error is just "invalid"
+        return False, f"verification error: {e}"
     return True, "ok"
 
 
@@ -46,35 +72,92 @@ def main() -> int:
     ap.add_argument("--pubkey", required=True)
     ap.add_argument("file", help="receipt .json or chain .jsonl (with --chain)")
     ap.add_argument("--chain", action="store_true")
+    ap.add_argument("--agent", default=None,
+                    help="expected agent_id for every receipt in the chain")
+    ap.add_argument("--expect-count", type=int, default=None,
+                    help="externally anchored receipt count — detects tail truncation")
+    ap.add_argument("--expect-head", default=None,
+                    help="externally anchored sha256 of the last receipt — "
+                         "detects truncation/regeneration")
     args = ap.parse_args()
 
-    pub = serialization.load_pem_public_key(
-        open(args.pubkey, "rb").read())
+    try:
+        pub = serialization.load_pem_public_key(open(args.pubkey, "rb").read())
+    except Exception as e:  # noqa: BLE001
+        print(f"INVALID: cannot load public key: {e}")
+        return 1
 
     if not args.chain:
-        receipt = json.load(open(args.file, encoding="utf-8"))
+        try:
+            receipt = json.load(open(args.file, encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            print(f"INVALID: cannot parse receipt file: {e}")
+            return 1
         ok, why = verify_one(receipt, pub)
-        print(f"{'VALID' if ok else 'INVALID'}: {why} "
-              f"(claim {receipt.get('claim_id')}, verdict {receipt.get('verdict')})")
+        cid = receipt.get("claim_id") if isinstance(receipt, dict) else "?"
+        vd = receipt.get("verdict") if isinstance(receipt, dict) else "?"
+        print(f"{'VALID' if ok else 'INVALID'}: {why} (claim {cid}, verdict {vd})")
         return 0 if ok else 1
 
-    prev = "0" * 64
+    prev = GENESIS
     n = 0
     bad = 0
-    with open(args.file, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+    last = None
+    try:
+        fh = open(args.file, encoding="utf-8")
+    except OSError as e:
+        print(f"INVALID: cannot open chain file: {e}")
+        return 1
+    with fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
                 continue
-            r = json.loads(line)
+            try:
+                r = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                n += 1
+                bad += 1
+                print(f"  [{n}] malformed JSON line: {e}")
+                continue
             n += 1
             ok, why = verify_one(r, pub)
-            chain_ok = r.get("prev_receipt_hash") == prev
-            if not ok or not chain_ok:
+            chain_ok = isinstance(r, dict) and r.get("prev_receipt_hash") == prev
+            agent_ok = (args.agent is None
+                        or (isinstance(r, dict) and r.get("agent_id") == args.agent))
+            if not ok or not chain_ok or not agent_ok:
                 bad += 1
-                print(f"  [{n}] {r.get('claim_id')}: sig={why} chain_ok={chain_ok}")
-            prev = sha256_hex(canonical_json(r))
+                note = f"sig={why} chain_ok={chain_ok}"
+                if args.agent is not None:
+                    note += f" agent_ok={agent_ok}"
+                cid = r.get("claim_id") if isinstance(r, dict) else "?"
+                print(f"  [{n}] {cid}: {note}")
+            if isinstance(r, dict):
+                try:
+                    prev = sha256_hex(canonical_json(r))
+                except (ValueError, TypeError):
+                    # non-canonicalizable line (e.g. NaN): fall back to default
+                    # json semantics so the walk continues and the bad receipt
+                    # is still flagged by verify_one
+                    prev = sha256_hex(json.dumps(r, sort_keys=True,
+                                                 ensure_ascii=False).encode("utf-8"))
+                last = r
+
+    head = GENESIS if last is None else prev
+    if args.expect_count is not None and n != args.expect_count:
+        bad += 1
+        print(f"  count mismatch: expected {args.expect_count}, found {n} "
+              "(possible tail truncation)")
+    if args.expect_head and head != args.expect_head.lower():
+        bad += 1
+        print(f"  head mismatch: expected {args.expect_head[:16]}…, got "
+              f"{head[:16]}… (possible truncation/regeneration)")
+    print(f"chain head: {head}")
     print(f"chain audit: {n} receipts, {bad} bad")
+    if bad == 0 and args.expect_count is None and not args.expect_head:
+        print("note: forward-walk intact. Tail truncation/regeneration is only "
+              "detectable with --expect-count/--expect-head (anchor the head "
+              "externally).")
     return 1 if bad else 0
 
 

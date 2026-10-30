@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("intact chain audits clean", problems == [])
 
     # flip a stored receipt on disk -> chain must break
-    chain_file = tmp / "chains" / "chain_agent-a.jsonl"
+    chain_file = store._path("agent-a")
     lines = chain_file.read_text(encoding="utf-8").splitlines()
     evil = json.loads(lines[0]); evil["verdict"] = "FAIL"
     lines[0] = json.dumps(evil, sort_keys=True, ensure_ascii=False)
@@ -175,19 +175,22 @@ with tempfile.TemporaryDirectory() as tmp:
     check("unrecognized backend -> UNVERIFIABLE", v == UNVERIFIABLE)
 
     print("== exit_code ==")
+    SHELL_OK = {"allow_shell": True}
     obs, v = probe_exit_code(f'"{PY}" -c "print(2+2)"',
-                             {"exit_code": 0, "stdout_contains": "4"})
+                             {**SHELL_OK, "exit_code": 0, "stdout_contains": "4"})
     check("command exit 0 + stdout -> PASS", v == PASS)
     check("exit_code observed in receipt", obs.get("exit_code") == 0)
-    obs, v = probe_exit_code(f'"{PY}" -c "import sys; sys.exit(3)"', {"exit_code": 3})
+    obs, v = probe_exit_code(f'"{PY}" -c "print(2+2)"', {"exit_code": 0})
+    check("exit_code WITHOUT allow_shell -> refused FAIL", v == FAIL and "refused" in str(obs.get("error", "")))
+    obs, v = probe_exit_code(f'"{PY}" -c "import sys; sys.exit(3)"', {**SHELL_OK, "exit_code": 3})
     check("nonzero exit matches expected -> PASS", v == PASS)
-    obs, v = probe_exit_code(f'"{PY}" -c "import sys; sys.exit(3)"', {})
+    obs, v = probe_exit_code(f'"{PY}" -c "import sys; sys.exit(3)"', SHELL_OK)
     check("nonzero exit vs default 0 -> FAIL", v == FAIL)
     obs, v = probe_exit_code(f'"{PY}" -c "import time; time.sleep(30)"',
-                             {"timeout_s": 2})
+                             {**SHELL_OK, "timeout_s": 2})
     check("timeout -> FAIL with timed_out flag", v == FAIL and obs.get("timed_out") is True)
     obs, v = probe_exit_code(f'"{PY}" -c "print(\'x\')"',
-                             {"stdout_sha256": "0" * 64})
+                             {**SHELL_OK, "stdout_sha256": "0" * 64})
     check("wrong stdout_sha256 -> FAIL", v == FAIL)
 
     print("== CLI end-to-end ==")
@@ -221,6 +224,53 @@ with tempfile.TemporaryDirectory() as tmp:
         [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent"],
         capture_output=True, text=True, cwd=str(ROOT), env=env)
     check("CLI audit of 2-receipt chain clean", cp4.returncode == 0)
+
+    # --- truncation detection via anchored head/count (the fix for C1) ---
+    import re
+    m = re.search(r"chain head: ([0-9a-f]{64})", cp4.stdout)
+    check("audit prints chain head", bool(m))
+    head = m.group(1) if m else ""
+    chain_files = list((tmp / "cli_home" / "chains").glob("chain_cli-agent*.jsonl"))
+    lines = chain_files[0].read_text(encoding="utf-8").splitlines()
+    chain_files[0].write_text("\n".join(lines[:1]) + "\n", encoding="utf-8")  # drop newest
+    cp5 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "audit", "--agent", "cli-agent",
+         "--expect-count", "2", "--expect-head", head],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("tail truncation detected via anchored count+head",
+          cp5.returncode == 1 and "truncation" in cp5.stdout)
+    chain_files[0].write_text("\n".join(lines) + "\n", encoding="utf-8")  # restore
+
+    # --- chain relabeling rejected (the fix for C2) ---
+    evil_chain = (tmp / "cli_home" / "chains" / chain_files[0].name.replace("cli-agent", "other-agent"))
+    evil_chain.write_text(chain_files[0].read_text(encoding="utf-8"), encoding="utf-8")
+    cp6 = subprocess.run(
+        [PY, str(ROOT / "verify_receipt.py"), "--agent", "other-agent", "--chain",
+         "--pubkey", str(tmp / "cli_home" / "keys" / "agentproof_ed25519.pub"),
+         str(evil_chain)],
+        capture_output=True, text=True, cwd=str(ROOT))
+    check("relabeled chain rejected (agent binding)",
+          cp6.returncode == 1 and "agent_ok=False" in cp6.stdout)
+    evil_chain.unlink()
+
+    # --- NaN rejected in --expect (m3) ---
+    cp7 = subprocess.run(
+        [PY, "-m", "agentproof.cli", "claim", "file_exists",
+         "--agent", "cli-agent", "--target", str(f),
+         "--expect", '{"min_bytes": NaN}'],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("NaN in --expect rejected with exit 2", cp7.returncode == 2)
+
+    # --- http_ok refuses non-GET/HEAD methods by default (M3 partial) ---
+    obs, v = probe_http_ok("http://127.0.0.1:1/", {"method": "DELETE"})
+    check("http_ok DELETE refused without allow_unsafe_method",
+          v == FAIL and "refused" in str(obs.get("error", "")))
+
+    # --- verify_receipt robustness: non-string sig no longer raises (M4) ---
+    ok_r, why_r = verify_receipt({"v": 1, "sig": 123, "claim_id": "x"}, pub_pem)
+    check("non-string sig -> clean rejection, no crash", not ok_r)
+    ok_v, why_v = verify_receipt({"v": 99, "sig": "ed25519:" + "00" * 64}, pub_pem)
+    check("unknown schema version rejected", not ok_v and "version" in why_v)
 
 print()
 n_pass = sum(1 for _, ok in results if ok)
