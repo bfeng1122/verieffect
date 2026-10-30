@@ -24,7 +24,7 @@ verdict is independent of the agent that benefits from it.
 3. `db_row_matches` — SELECT via read-only DSN; compare cells to claim.
 4. `exit_code` — re-run a stated command; compare exit/stdout-hash. NOT sandboxed
    (runs with verifier privileges); gated behind explicit `allow_shell: true`.
-5. `process_state` — named process/service running on host (via agent).
+5. `process_state` — named process/service running on host (roadmap, not in MVP).
 
 ## Receipt format (the moat seed)
 ```json

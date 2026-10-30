@@ -32,6 +32,7 @@ cron-driven pipelines, CI bots, personal agents — fail the same way: the log s
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt   # Linux/macOS: .venv/bin/python
+# Optional: `pip install .` also gives you an `agentproof` console script.
 
 # 1. File a claim — targets a file that ships with the repo, so this PASSES on a
 #    fresh clone (exit code 0). Keys/receipts land under ./data (see below).

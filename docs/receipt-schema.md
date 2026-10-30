@@ -55,7 +55,10 @@ Chain (audit):
   record does not exist), not `UNVERIFIABLE`.
 - `db_row_matches` accepts read-only queries only (`SELECT`/`WITH` for sqlite, with
   `PRAGMA query_only` as a second enforcement layer); anything else is rejected
-  before execution.
+  before execution. Multi-statement batches (`SELECT 1; DROP TABLE x`) are refused
+  by `sqlite3.execute()` itself and additionally blocked by both layers.
+- Value matching is type-strict for booleans: `True` never equals a numeric `1`
+  (Python's `True == 1` trap is explicitly guarded and regression-tested).
 - `http_ok` refuses methods other than GET/HEAD unless `allow_unsafe_method` is
   passed explicitly. `observed.final_url` records where redirects actually landed.
 - `exit_code` is gated OFF by default (`allow_shell: true` required). It is NOT

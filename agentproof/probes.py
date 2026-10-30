@@ -167,8 +167,11 @@ def probe_http_ok(target: str, expect: dict[str, Any] | None) -> tuple[dict, str
 
 def _numeq(a: Any, b: Any) -> bool:
     """Compare values; int/float compare numerically, bools never equal ints."""
-    if isinstance(a, bool) or isinstance(b, bool):
-        return a is b if isinstance(a, bool) and isinstance(b, bool) else a == b
+    a_bool, b_bool = isinstance(a, bool), isinstance(b, bool)
+    if a_bool or b_bool:
+        # bool vs bool: identity compare. bool vs anything else: never equal
+        # (Python's True == 1 must NOT slip through into numeric matching)
+        return a is b if (a_bool and b_bool) else False
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return float(a) == float(b)
     return a == b

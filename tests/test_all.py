@@ -154,6 +154,15 @@ with tempfile.TemporaryDirectory() as tmp:
     obs, v = probe_db_row_matches(str(jl), {"occurrence": "any",
                                             "match": {"ticker": "NVDA"}})
     check("jsonl occurrence=any finds earlier row -> PASS", v == PASS)
+    # bool trap regression: True must never match a numeric 1
+    jl2 = tmp / "booltrap.jsonl"
+    jl2.write_text('{"qty": 1, "flag": true}\n', encoding="utf-8")
+    obs, v = probe_db_row_matches(str(jl2), {"match": {"qty": True}})
+    check("bool True does NOT match numeric 1", v == FAIL)
+    obs, v = probe_db_row_matches(str(jl2), {"match": {"flag": True}})
+    check("bool True matches bool true", v == PASS)
+    obs, v = probe_db_row_matches(str(jl2), {"match": {"qty": 1}})
+    check("numeric 1 still matches numeric 1", v == PASS)
     obs, v = probe_db_row_matches(str(jl), {})
     check("jsonl missing match -> UNVERIFIABLE", v == UNVERIFIABLE)
 
